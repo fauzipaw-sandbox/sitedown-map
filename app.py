@@ -94,7 +94,6 @@ if df_dapot is not None and ume_file:
         
         df_down = df_ume[cond_power | cond_link1 | cond_link2].copy()
         
-        # Konversi ke Datetime
         if 'Occurrence Time' in df_down.columns:
             df_down['Occurrence_DT'] = pd.to_datetime(df_down['Occurrence Time'], errors='coerce')
             min_occurrence = df_down.groupby('ME_CLEAN')['Occurrence_DT'].min()
@@ -111,16 +110,14 @@ if df_dapot is not None and ume_file:
         
         df_dapot['Status'] = df_dapot['NE_CLEAN'].apply(lambda x: 'Down' if x in site_down_list else 'Up')
 
-        # --- FIX: Durasi ditarik pakai Timezone WIB biar ga minus kalau server UTC ---
         def format_durasi(start_time):
             if pd.isnull(start_time):
                 return "-"
-            # Paksa waktu sekarang pakai WIB (Asia/Jakarta) terus hapus info timezone-nya biar sejalan sama data Excel
             now_wib = pd.Timestamp.now(tz='Asia/Jakarta').tz_localize(None)
             delta = now_wib - start_time
             total_seconds = int(delta.total_seconds())
             
-            if total_seconds < 0: return "0m" # Kalau masih aneh, tetep diamankan
+            if total_seconds < 0: return "0m"
             
             days, remainder = divmod(total_seconds, 86400)
             hours, remainder = divmod(remainder, 3600)
@@ -132,7 +129,6 @@ if df_dapot is not None and ume_file:
             res.append(f"{minutes}m")
             return " ".join(res)
             
-        # --- FIX: Ditambah presentase dan Total di tabel summary ---
         def get_summary_table(col_name):
             if col_name not in df_dapot.columns: return pd.DataFrame()
             summary = pd.crosstab(df_dapot[col_name], df_dapot['Status']).reset_index()
@@ -140,13 +136,12 @@ if df_dapot is not None and ume_file:
                 if s not in summary.columns: summary[s] = 0
             summary = summary.rename(columns={'Down': 'Jumlah Down', 'Up': 'Jumlah Up'})
             
-            # Hitung Total dan Persentase
             summary['Total'] = summary['Jumlah Down'] + summary['Jumlah Up']
             summary['% Down'] = (summary['Jumlah Down'] / summary['Total'] * 100).round(1).astype(str) + '%'
             summary['% Up'] = (summary['Jumlah Up'] / summary['Total'] * 100).round(1).astype(str) + '%'
             
-            # Urutkan berdasarkan Jumlah Down terbanyak
-            return summary.sort_values('Jumlah Down', ascending=False)[[col_name, 'Jumlah Down', 'Jumlah Up', '% Down', '% Up', 'Total']]
+            # Kolom utama di-set jadi Index supaya Freeze otomatis jalan di Streamlit
+            return summary.sort_values('Jumlah Down', ascending=False).set_index(col_name)[['Jumlah Down', 'Jumlah Up', '% Down', '% Up', 'Total']]
 
         # ==========================================
         # SPLIT SCREEN DASHBOARD
@@ -160,7 +155,8 @@ if df_dapot is not None and ume_file:
         with col_stats:
             col_stat_text, col_stat_toggle = st.columns([2, 1])
             col_stat_text.subheader("📊 Summary Status")
-            show_labels = col_stat_toggle.toggle("Show Site ID", value=True)
+            # --- UPDATE: Default Show Site ID = False ---
+            show_labels = col_stat_toggle.toggle("Show Site ID", value=False)
             
             up_count = len(df_dapot[df_dapot['Status'] == 'Up'])
             down_count = len(df_dapot[df_dapot['Status'] == 'Down'])
@@ -173,27 +169,31 @@ if df_dapot is not None and ume_file:
             
             with tab1:
                 kab_df = get_summary_table('Kota/Kab')
-                event_kab = st.dataframe(kab_df, height=300, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+                event_kab = st.dataframe(kab_df, height=300, use_container_width=True, on_select="rerun", selection_mode="single-row")
                 if len(event_kab.selection.rows) > 0:
                     filter_col = 'Kota/Kab'
-                    filter_val = kab_df.iloc[event_kab.selection.rows[0]]['Kota/Kab']
+                    filter_val = kab_df.index[event_kab.selection.rows[0]]
                     
             with tab2:
                 kec_df = get_summary_table('Kecamatan')
-                event_kec = st.dataframe(kec_df, height=300, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+                event_kec = st.dataframe(kec_df, height=300, use_container_width=True, on_select="rerun", selection_mode="single-row")
                 if len(event_kec.selection.rows) > 0:
                     filter_col = 'Kecamatan'
-                    filter_val = kec_df.iloc[event_kec.selection.rows[0]]['Kecamatan']
+                    filter_val = kec_df.index[event_kec.selection.rows[0]]
                     
             with tab3:
                 hub_df = get_summary_table('Hub site')
-                event_hub = st.dataframe(hub_df, height=300, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+                event_hub = st.dataframe(hub_df, height=300, use_container_width=True, on_select="rerun", selection_mode="single-row")
                 if len(event_hub.selection.rows) > 0:
                     filter_col = 'Hub site'
-                    filter_val = hub_df.iloc[event_hub.selection.rows[0]]['Hub site']
+                    filter_val = hub_df.index[event_hub.selection.rows[0]]
             
             with tab4:
                 df_dapot_down = df_dapot[df_dapot['Status'] == 'Down'].copy()
+                
+                # --- UPDATE: Filtering Data Lengkap Berdasarkan Klik di Tab Lain ---
+                if filter_col and filter_val:
+                    df_dapot_down = df_dapot_down[df_dapot_down[filter_col] == filter_val]
                 
                 if not df_dapot_down.empty:
                     df_dapot_down['Occurrence_Time'] = df_dapot_down['NE_CLEAN'].map(min_occurrence)
@@ -215,9 +215,17 @@ if df_dapot is not None and ume_file:
                     
                     kolom_ada = [k for k in kolom_detail.keys() if k in df_dapot_down.columns]
                     df_detail_final = df_dapot_down[kolom_ada].rename(columns=kolom_detail)
-                    st.dataframe(df_detail_final, height=300, use_container_width=True, hide_index=True)
+                    
+                    # --- UPDATE: Freeze kolom Site ID ---
+                    if 'Site ID' in df_detail_final.columns:
+                        df_detail_final = df_detail_final.set_index('Site ID')
+                        
+                    st.dataframe(df_detail_final, height=300, use_container_width=True)
                 else:
-                    st.info("🎉 Keren! Tidak ada site yang Down saat ini.")
+                    if filter_col:
+                        st.info(f"🎉 Keren! Tidak ada site yang Down di area {filter_col}: {filter_val}.")
+                    else:
+                        st.info("🎉 Keren! Tidak ada site yang Down saat ini.")
 
         # --- KOLOM KANAN (MAPS) ---
         with col_map:
