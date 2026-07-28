@@ -16,7 +16,7 @@ st.markdown("""
         footer { visibility: hidden; }
         .stTabs [data-baseweb="tab-list"] { gap: 10px; }
         .st-emotion-cache-1y4p8pa { padding-top: 0rem; }
-        /* Memastikan class leaflet label kebal terhadap klik mouse */
+        /* Memastikan class leaflet label kebal terhadap klik mouse biar marker di bawahnya bisa diklik */
         .leaflet-marker-icon.site-label-container { pointer-events: none !important; }
     </style>
 """, unsafe_allow_html=True)
@@ -75,7 +75,6 @@ if df_dapot is not None and ume_file:
         df_ume['ME_CLEAN'] = df_ume['ME ID'].apply(clean_id) if 'ME ID' in df_ume.columns else st.stop()
         df_dapot['NE_CLEAN'] = df_dapot['NE ID'].apply(clean_id) if 'NE ID' in df_dapot.columns else st.stop()
 
-        # Normalisasi Case Kabupaten dan Kecamatan (Biar nyatu)
         if 'Kota/Kab' in df_dapot.columns:
             df_dapot['Kota/Kab'] = df_dapot['Kota/Kab'].apply(lambda x: str(x).title() if pd.notnull(x) else x)
         if 'Kecamatan' in df_dapot.columns:
@@ -91,7 +90,6 @@ if df_dapot is not None and ume_file:
         
         df_down = df_ume[cond_power | cond_link1 | cond_link2].copy()
         
-        # Dictionary Alarm
         if 'Occurrence Time' in df_down.columns:
             df_down['Alarm_Detail'] = "• " + df_down['Alarm Code Name'].astype(str) + " (" + df_down['Occurrence Time'].astype(str) + ")"
         else:
@@ -103,7 +101,7 @@ if df_dapot is not None and ume_file:
         df_dapot['Status'] = df_dapot['NE_CLEAN'].apply(lambda x: 'Down' if x in site_down_list else 'Up')
 
         # ==========================================
-        # SPLIT SCREEN DASHBOARD (KIRI & KANAN)
+        # SPLIT SCREEN DASHBOARD
         # ==========================================
         col_stats, col_map = st.columns([1.5, 2.5]) 
         
@@ -131,21 +129,24 @@ if df_dapot is not None and ume_file:
                 st.caption("💡 *Klik baris pada tabel untuk memfilter Map.*")
                 
                 with tab1:
-                    kab_df = df_dapot_down.groupby('Kota/Kab').size().reset_index(name='Jumlah Down')
+                    # Diurutkan Descending
+                    kab_df = df_dapot_down.groupby('Kota/Kab').size().reset_index(name='Jumlah Down').sort_values('Jumlah Down', ascending=False)
                     event_kab = st.dataframe(kab_df, height=300, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
                     if len(event_kab.selection.rows) > 0:
                         filter_col = 'Kota/Kab'
                         filter_val = kab_df.iloc[event_kab.selection.rows[0]]['Kota/Kab']
                         
                 with tab2:
-                    kec_df = df_dapot_down.groupby('Kecamatan').size().reset_index(name='Jumlah Down')
+                    # Diurutkan Descending
+                    kec_df = df_dapot_down.groupby('Kecamatan').size().reset_index(name='Jumlah Down').sort_values('Jumlah Down', ascending=False)
                     event_kec = st.dataframe(kec_df, height=300, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
                     if len(event_kec.selection.rows) > 0:
                         filter_col = 'Kecamatan'
                         filter_val = kec_df.iloc[event_kec.selection.rows[0]]['Kecamatan']
                         
                 with tab3:
-                    hub_df = df_dapot_down.groupby('Hub site').size().reset_index(name='Jumlah Down')
+                    # Diurutkan Descending
+                    hub_df = df_dapot_down.groupby('Hub site').size().reset_index(name='Jumlah Down').sort_values('Jumlah Down', ascending=False)
                     event_hub = st.dataframe(hub_df, height=300, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
                     if len(event_hub.selection.rows) > 0:
                         filter_col = 'Hub site'
@@ -153,17 +154,14 @@ if df_dapot is not None and ume_file:
 
         # --- KOLOM KANAN (MAPS) ---
         with col_map:
-            # Terapkan Filter Peta kalau ada row yang diklik
             df_map = df_dapot.copy()
             if filter_col and filter_val:
-                # Normalisasi data Hub site buat filter (mengubah NaN jadi 'Non Hub')
                 if filter_col == 'Hub site':
                     df_map['Hub site'] = df_map['Hub site'].fillna('Non Hub')
-                
                 df_map = df_map[df_map[filter_col] == filter_val]
                 st.info(f"📍 Menampilkan Peta Area **{filter_col}: {filter_val}** (Menampilkan Up & Down)")
             else:
-                st.write("") # Spacer
+                st.write("") 
             
             if 'LAT' in df_map.columns and 'LONG' in df_map.columns:
                 df_map['LAT'] = df_map['LAT'].astype(str).str.replace(',', '.').astype(float)
@@ -198,7 +196,8 @@ if df_dapot is not None and ume_file:
                         hub_status = 'Non Hub' if not hub_val or hub_val.lower() == 'nan' else hub_val
                         is_hub = 'hub' in hub_status.lower() and 'non' not in hub_status.lower()
                         
-                        color = '#ff3333' if status == 'Down' else '#00cc44'
+                        # Warna lebih gelap dan elegan
+                        color_hex = '#e60000' if status == 'Down' else '#00802b'
                         
                         if status == 'Down':
                             alarms_terkait = alarm_dict.get(ne_id, "Tidak ada data historis")
@@ -229,9 +228,9 @@ if df_dapot is not None and ume_file:
                         
                         tooltip_text = f"{site_name} ({site_id})"
                         
-                        # LOGIC ICON CUSTOM (Garis Tepi Putih Tebal biar pop up di map satelit, gampang diklik!)
+                        # LOGIC ICON
                         if is_hub:
-                            icon_html = f'<div style="color:{color}; font-size:16px; text-shadow: -1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF, 0px 0px 4px rgba(0,0,0,0.6);">★</div>'
+                            icon_html = f'<div style="color:{color_hex}; font-size:16px; text-shadow: -1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF, 0px 0px 4px rgba(0,0,0,0.6);">★</div>'
                             folium.Marker(
                                 location=[lat, lon],
                                 icon=folium.DivIcon(html=icon_html, icon_size=(16, 16), icon_anchor=(8, 10)),
@@ -239,17 +238,22 @@ if df_dapot is not None and ume_file:
                                 tooltip=tooltip_text
                             ).add_to(m)
                         else:
-                            icon_html = f'<div style="width:10px; height:10px; background-color:{color}; border:2px solid white; border-radius:50%; box-shadow:0px 0px 3px rgba(0,0,0,0.6);"></div>'
-                            folium.Marker(
+                            # Balik pakai CircleMarker bawaan folium tapi dikasih border putih padat biar popup dikliknya lancar
+                            folium.CircleMarker(
                                 location=[lat, lon],
-                                icon=folium.DivIcon(html=icon_html, icon_size=(10, 10), icon_anchor=(5, 5)),
+                                radius=4.5,
+                                color='white',       # Garis tepi (border) warna putih
+                                weight=1.5,          # Ketebalan garis tepi
+                                fill=True,
+                                fill_color=color_hex, # Warna isi (merah/hijau gelap)
+                                fill_opacity=1.0,
                                 popup=folium.Popup(popup_html, max_width=400),
                                 tooltip=tooltip_text
                             ).add_to(m)
 
-                        # LABEL ZOOM-IN (Unbold, Kecil, ClassName ditambahin biar ga bentrok klik)
+                        # LABEL ZOOM-IN (Class 'site-label-container' udah diproteksi CSS biar ngga nge-block klik)
                         if show_labels:
-                            label_html = f'<div class="site-label" style="display:none; font-size:9.5px; font-weight:normal; color:{color}; text-shadow: -1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF, 0px 0px 3px #FFF; white-space:nowrap; margin-left:12px; margin-top:-5px;">{site_id}</div>'
+                            label_html = f'<div class="site-label" style="display:none; font-size:9.5px; font-weight:normal; color:{color_hex}; text-shadow: -1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF, 0px 0px 3px #FFF; white-space:nowrap; margin-left:12px; margin-top:-5px;">{site_id}</div>'
                             folium.Marker(
                                 location=[lat, lon],
                                 icon=folium.DivIcon(html=label_html, class_name='site-label-container')
@@ -257,7 +261,6 @@ if df_dapot is not None and ume_file:
                     
                     folium.LayerControl(position='topright').add_to(m)
                     
-                    # Height disesuaikan
                     st_folium(m, use_container_width=True, height=520, returned_objects=[])
                 else:
                     st.warning("Tidak ada data site (Up/Down) di area yang dipilih.")
