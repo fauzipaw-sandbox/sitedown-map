@@ -17,7 +17,6 @@ st.markdown("""
         footer { visibility: hidden; }
         .stTabs [data-baseweb="tab-list"] { gap: 10px; }
         .st-emotion-cache-1y4p8pa { padding-top: 0rem; }
-        .leaflet-marker-icon.site-label-container { pointer-events: none !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -80,11 +79,14 @@ if df_dapot is not None and ume_file:
         if 'Kecamatan' in df_dapot.columns:
             df_dapot['Kecamatan'] = df_dapot['Kecamatan'].apply(lambda x: str(x).title() if pd.notnull(x) else x)
 
-        # Rule Down
+        # --- FIX: RULE DOWN (STRICT MATCH UNTUK EQUIPMENT=1) ---
+        # Hanya nangkep posisi yang benar-benar tulisan "Equipment=1" doang
         cond_power = (df_ume['Alarm Code Name'].str.contains('Input power-off', case=False, na=False)) & \
-                     (df_ume['Position'].astype(str).str.contains('Equipment=1', case=False, na=False))
+                     (df_ume['Position'].astype(str).str.strip() == 'Equipment=1')
+                     
         cond_link1 = (df_ume['Specific Problem'].str.contains('The link between the server and the ME is broken', case=False, na=False)) | \
                      (df_ume['Alarm Code Name'].str.contains('The link between the server and the ME is broken', case=False, na=False))
+        
         cond_link2 = (df_ume['Specific Problem'].str.contains('Site Abis control link broken', case=False, na=False)) | \
                      (df_ume['Alarm Code Name'].str.contains('Site Abis control link broken', case=False, na=False))
         
@@ -107,7 +109,6 @@ if df_dapot is not None and ume_file:
         
         df_dapot['Status'] = df_dapot['NE_CLEAN'].apply(lambda x: 'Down' if x in site_down_list else 'Up')
 
-        # Fungsi hitung durasi dari Occurrence Time sampai System Generate (Now)
         def format_durasi(start_time):
             if pd.isnull(start_time):
                 return "-"
@@ -173,7 +174,6 @@ if df_dapot is not None and ume_file:
                         filter_val = hub_df.iloc[event_hub.selection.rows[0]]['Hub site']
                 
                 with tab4:
-                    # Persiapan Data Detail
                     df_dapot_down['Occurrence_Time'] = df_dapot_down['NE_CLEAN'].map(min_occurrence)
                     df_dapot_down['Durasi Down'] = df_dapot_down['Occurrence_Time'].apply(format_durasi)
                     
@@ -190,10 +190,8 @@ if df_dapot is not None and ume_file:
                         'Durasi Down': 'Durasi Down'
                     }
                     
-                    # Cek kolom yang ada aja biar ga error kalau penamaan di sheet berubah
                     kolom_ada = [k for k in kolom_detail.keys() if k in df_dapot_down.columns]
                     df_detail_final = df_dapot_down[kolom_ada].rename(columns=kolom_detail)
-                    
                     st.dataframe(df_detail_final, height=300, use_container_width=True, hide_index=True)
 
         # --- KOLOM KANAN (MAPS) ---
@@ -244,8 +242,6 @@ if df_dapot is not None and ume_file:
                         
                         if status == 'Down':
                             alarms_terkait = alarm_dict.get(ne_id, "Tidak ada data historis")
-                            
-                            # Ngitung durasi khusus buat popup
                             start_dt = min_occurrence.get(ne_id)
                             durasi_str = format_durasi(start_dt)
                             
@@ -276,35 +272,29 @@ if df_dapot is not None and ume_file:
                         
                         tooltip_text = f"{site_name} ({site_id})"
                         
-                        # LOGIC ICON (Sekarang pake Custom HTML Div buat dua-duanya biar 100% bisa diklik)
+                        # --- FIX: GABUNGIN MARKER DAN TEKS JADI 1 ELEMEN (Anti Bug Klik) ---
                         if is_hub:
-                            icon_html = f'<div style="color:{color_hex}; font-size:16px; text-shadow: -1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF, 0px 0px 4px rgba(0,0,0,0.6); cursor: pointer;">★</div>'
-                            folium.Marker(
-                                location=[lat, lon],
-                                icon=folium.DivIcon(html=icon_html, icon_size=(16, 16), icon_anchor=(8, 10)),
-                                popup=folium.Popup(popup_html, max_width=400),
-                                tooltip=tooltip_text
-                            ).add_to(m)
+                            shape_html = f'<div style="color:{color_hex}; font-size:18px; margin-top:-4px; margin-left:-2px; text-shadow: -1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF, 0px 0px 4px rgba(0,0,0,0.6);">★</div>'
                         else:
-                            # Titik bulat non-hub sekarang jadi custom HTML buatan sendiri, anti bug!
-                            icon_html = f'<div style="width:10px; height:10px; background-color:{color_hex}; border:2px solid white; border-radius:50%; box-shadow:0px 0px 3px rgba(0,0,0,0.6); cursor: pointer;"></div>'
-                            folium.Marker(
-                                location=[lat, lon],
-                                icon=folium.DivIcon(html=icon_html, icon_size=(10, 10), icon_anchor=(5, 5)),
-                                popup=folium.Popup(popup_html, max_width=400),
-                                tooltip=tooltip_text
-                            ).add_to(m)
-
-                        # LABEL ZOOM-IN
+                            shape_html = f'<div style="width:12px; height:12px; background-color:{color_hex}; border:2px solid white; border-radius:50%; box-shadow:0px 0px 3px rgba(0,0,0,0.6);"></div>'
+                            
                         if show_labels:
-                            label_html = f'<div class="site-label" style="display:none; font-size:9.5px; font-weight:normal; color:{color_hex}; text-shadow: -1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF, 0px 0px 3px #FFF; white-space:nowrap; margin-left:12px; margin-top:-5px;">{site_id}</div>'
-                            folium.Marker(
-                                location=[lat, lon],
-                                icon=folium.DivIcon(html=label_html, class_name='site-label-container')
-                            ).add_to(m)
+                            # pointer-events: none bikin teks nggak bisa diklik (klik nembus ke titik markernya)
+                            label_html = f'<div class="site-label" style="display:none; position:absolute; left:14px; top:-2px; pointer-events:none; font-size:10px; font-weight:normal; color:{color_hex}; text-shadow: -1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF, 0px 0px 3px #FFF; white-space:nowrap;">{site_id}</div>'
+                        else:
+                            label_html = ""
+                            
+                        # Dibungkus di 1 kotak area klik (12x12px) biar Folium bacanya cuma ada 1 object per site!
+                        combined_html = f'<div style="position:relative; width:12px; height:12px;">{shape_html}{label_html}</div>'
+
+                        folium.Marker(
+                            location=[lat, lon],
+                            icon=folium.DivIcon(html=combined_html, icon_size=(12, 12), icon_anchor=(6, 6)),
+                            popup=folium.Popup(popup_html, max_width=400),
+                            tooltip=tooltip_text
+                        ).add_to(m)
                     
                     folium.LayerControl(position='topright').add_to(m)
-                    
                     st_folium(m, use_container_width=True, height=520, returned_objects=[])
                 else:
                     st.warning("Tidak ada data site (Up/Down) di area yang dipilih.")
