@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import folium
-import re
 from streamlit_folium import st_folium
 
 st.set_page_config(page_title="Site Down/Up Mapping", layout="wide")
@@ -32,33 +31,35 @@ if df_dapot is not None:
         try:
             df_ume = pd.read_excel(ume_file)
             
-            # --- FIX LOGIC: EXTRACT ID NUMBER ONLY ---
-            # Karena ME ID di UME itu "287021" dan di Dapot itu "MRB021", kita ekstrak angkanya
-            def get_number_only(text):
+            # --- NEW LOGIC: 6 DIGIT ME VS SITE ID ---
+            def get_6digit_id(text):
                 try:
-                    text_str = str(text)
-                    # Hapus .0 kalau format float
-                    if text_str.endswith('.0'):
-                        text_str = text_str[:-2]
-                    # Ambil digit angka aja dari text
-                    numbers = re.findall(r'\d+', text_str)
-                    return numbers[0] if numbers else text_str
+                    val = str(text).strip()
+                    # Hapus .0 kalau file excel ngebaca id sebagai angka float
+                    if val.endswith('.0'):
+                        val = val[:-2]
+                        
+                    # Cek kalau depannya C_ atau N_ (case insensitive)
+                    if val.upper().startswith('C_') or val.upper().startswith('N_'):
+                        return val[2:8].upper() # Ambil 6 digit setelah C_ atau N_
+                    else:
+                        return val[:6].upper() # Ambil 6 digit dari kiri
                 except:
                     return str(text)
 
             if 'ME ID' in df_ume.columns:
-                df_ume['ME_NUM'] = df_ume['ME ID'].apply(get_number_only)
+                df_ume['ME_CLEAN'] = df_ume['ME ID'].apply(get_6digit_id)
             else:
-                st.error("Kolom 'ME ID' ga ada!")
+                st.error("Kolom 'ME ID' tidak ditemukan di file UME!")
                 st.stop()
                 
             if 'Site_ID' in df_dapot.columns:
-                df_dapot['SITE_NUM'] = df_dapot['Site_ID'].apply(get_number_only)
+                df_dapot['SITE_CLEAN'] = df_dapot['Site_ID'].apply(get_6digit_id)
             else:
-                st.error("Kolom 'Site_ID' ga ada!")
+                st.error("Kolom 'Site_ID' tidak ditemukan di file Dapot!")
                 st.stop()
 
-            # Rule Filter Down
+            # --- RULE FILTERING ALARM DOWN ---
             cond_power = (df_ume['Alarm Code Name'].str.contains('Input power-off', case=False, na=False)) & \
                          (df_ume['Position'].astype(str).str.contains('Equipment=1', case=False, na=False))
             
@@ -70,10 +71,10 @@ if df_dapot is not None:
             
             df_down = df_ume[cond_power | cond_link1 | cond_link2]
                              
-            site_down_list = df_down['ME_NUM'].dropna().unique()
+            site_down_list = df_down['ME_CLEAN'].dropna().unique()
             
             # Tentukan Status
-            df_dapot['Status'] = df_dapot['SITE_NUM'].apply(lambda x: 'Down' if x in site_down_list else 'Up')
+            df_dapot['Status'] = df_dapot['SITE_CLEAN'].apply(lambda x: 'Down' if x in site_down_list else 'Up')
             
             st.divider()
             st.subheader("📍 Peta Persebaran Site")
@@ -99,8 +100,7 @@ if df_dapot is not None:
                     
                     popup_html = f"<b>{site_id}</b><br>{site_name}<br>Status: {status}"
                     
-                    # Tooltip muncul pas di-hover (efek seperti zoom reveal teks)
-                    # Marker dibikin lingkaran kecil bersih
+                    # Tooltip muncul pas di-hover (bikin maps rapi karena label cuma nongol pas kursor deket)
                     folium.CircleMarker(
                         location=[lat, lon],
                         radius=4,
@@ -110,7 +110,7 @@ if df_dapot is not None:
                         fill_color=color,
                         fill_opacity=0.8,
                         popup=folium.Popup(popup_html, max_width=300),
-                        tooltip=f"{site_id}" # Munculin teks ID pas kursor diarahkan!
+                        tooltip=f"{site_id}" 
                     ).add_to(m)
                 
                 st_folium(m, width=1200, height=600)
