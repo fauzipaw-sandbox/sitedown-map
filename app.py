@@ -5,7 +5,7 @@ from streamlit_folium import st_folium
 
 st.set_page_config(page_title="Site Down/Up Mapping", layout="wide")
 st.title("🗺️ Mapping Status Site (Up/Down)")
-st.markdown("Dashboard ini narik data Dapot langsung dari Google Sheets dan mencocokkannya dengan file UME.")
+st.markdown("Dashboard ini narik data Dapot langsung dari Google Sheets dan mencocokkannya dengan file UME (ME ID vs NE ID).")
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/11pp1YavJsR6wnYcvs0Z6B94KM75clu7FQgRy7sdEQ4g/export?format=csv&gid=0"
 
@@ -31,32 +31,24 @@ if df_dapot is not None:
         try:
             df_ume = pd.read_excel(ume_file)
             
-            # --- NEW LOGIC: 6 DIGIT ME VS SITE ID ---
-            def get_6digit_id(text):
-                try:
-                    val = str(text).strip()
-                    # Hapus .0 kalau file excel ngebaca id sebagai angka float
-                    if val.endswith('.0'):
-                        val = val[:-2]
-                        
-                    # Cek kalau depannya C_ atau N_ (case insensitive)
-                    if val.upper().startswith('C_') or val.upper().startswith('N_'):
-                        return val[2:8].upper() # Ambil 6 digit setelah C_ atau N_
-                    else:
-                        return val[:6].upper() # Ambil 6 digit dari kiri
-                except:
-                    return str(text)
+            # --- NEW LOGIC: Match ME ID (UME) langsung ke NE ID (Dapot) ---
+            def clean_id(text):
+                val = str(text).strip()
+                # Buang desimal .0 bawaan pandas kalau kebaca float
+                if val.endswith('.0'):
+                    return val[:-2]
+                return val
 
             if 'ME ID' in df_ume.columns:
-                df_ume['ME_CLEAN'] = df_ume['ME ID'].apply(get_6digit_id)
+                df_ume['ME_CLEAN'] = df_ume['ME ID'].apply(clean_id)
             else:
                 st.error("Kolom 'ME ID' tidak ditemukan di file UME!")
                 st.stop()
                 
-            if 'Site_ID' in df_dapot.columns:
-                df_dapot['SITE_CLEAN'] = df_dapot['Site_ID'].apply(get_6digit_id)
+            if 'NE ID' in df_dapot.columns:
+                df_dapot['NE_CLEAN'] = df_dapot['NE ID'].apply(clean_id)
             else:
-                st.error("Kolom 'Site_ID' tidak ditemukan di file Dapot!")
+                st.error("Kolom 'NE ID' tidak ditemukan di file Dapot!")
                 st.stop()
 
             # --- RULE FILTERING ALARM DOWN ---
@@ -73,8 +65,8 @@ if df_dapot is not None:
                              
             site_down_list = df_down['ME_CLEAN'].dropna().unique()
             
-            # Tentukan Status
-            df_dapot['Status'] = df_dapot['SITE_CLEAN'].apply(lambda x: 'Down' if x in site_down_list else 'Up')
+            # Tentukan Status berdasarkan match NE ID di dapot dengan list ME ID yang down
+            df_dapot['Status'] = df_dapot['NE_CLEAN'].apply(lambda x: 'Down' if x in site_down_list else 'Up')
             
             st.divider()
             st.subheader("📍 Peta Persebaran Site")
@@ -93,14 +85,16 @@ if df_dapot is not None:
                     lat = row['LAT']
                     lon = row['LONG']
                     site_name = row.get('Site_Name', 'Unknown')
-                    site_id = row['Site_ID']
+                    site_id = row.get('Site_ID', 'Unknown')
+                    ne_id = row.get('NE ID', 'Unknown')
                     status = row['Status']
                     
                     color = 'red' if status == 'Down' else 'green'
                     
-                    popup_html = f"<b>{site_id}</b><br>{site_name}<br>Status: {status}"
+                    # Popup kalau titiknya di-klik
+                    popup_html = f"<b>Site ID: {site_id}</b><br>NE ID: {ne_id}<br>{site_name}<br>Status: {status}"
                     
-                    # Tooltip muncul pas di-hover (bikin maps rapi karena label cuma nongol pas kursor deket)
+                    # Tooltip muncul pas di-hover 
                     folium.CircleMarker(
                         location=[lat, lon],
                         radius=4,
@@ -124,7 +118,8 @@ if df_dapot is not None:
                 
                 if down_count > 0:
                     st.write("**Detail Site Down:**")
-                    st.dataframe(df_dapot[df_dapot['Status'] == 'Down'][['Site_ID', 'Site_Name', 'LAT', 'LONG']], use_container_width=True)
+                    # Tampilkan Site_ID dan NE ID biar jelas laporannya
+                    st.dataframe(df_dapot[df_dapot['Status'] == 'Down'][['Site_ID', 'NE ID', 'Site_Name', 'LAT', 'LONG']], use_container_width=True)
             else:
                 st.error("Kolom 'LAT' dan 'LONG' wajib ada!")
                 
