@@ -79,11 +79,10 @@ if df_dapot is not None and ume_file:
         if 'Kecamatan' in df_dapot.columns:
             df_dapot['Kecamatan'] = df_dapot['Kecamatan'].apply(lambda x: str(x).title() if pd.notnull(x) else x)
             
-        # Standarisasi nilai Hub Site dari awal
         if 'Hub site' in df_dapot.columns:
             df_dapot['Hub site'] = df_dapot['Hub site'].fillna('Non Hub')
 
-        # Rule Down 
+        # Rule Down Strict
         cond_power = (df_ume['Alarm Code Name'].str.contains('Input power-off', case=False, na=False)) & \
                      (df_ume['Position'].astype(str).str.strip() == 'Equipment=1')
                      
@@ -95,7 +94,7 @@ if df_dapot is not None and ume_file:
         
         df_down = df_ume[cond_power | cond_link1 | cond_link2].copy()
         
-        # Konversi Occurrence Time ke Datetime buat ngitung Durasi Down
+        # Konversi ke Datetime
         if 'Occurrence Time' in df_down.columns:
             df_down['Occurrence_DT'] = pd.to_datetime(df_down['Occurrence Time'], errors='coerce')
             min_occurrence = df_down.groupby('ME_CLEAN')['Occurrence_DT'].min()
@@ -112,12 +111,17 @@ if df_dapot is not None and ume_file:
         
         df_dapot['Status'] = df_dapot['NE_CLEAN'].apply(lambda x: 'Down' if x in site_down_list else 'Up')
 
+        # --- FIX: Durasi ditarik pakai Timezone WIB biar ga minus kalau server UTC ---
         def format_durasi(start_time):
             if pd.isnull(start_time):
                 return "-"
-            delta = pd.Timestamp.now() - start_time
+            # Paksa waktu sekarang pakai WIB (Asia/Jakarta) terus hapus info timezone-nya biar sejalan sama data Excel
+            now_wib = pd.Timestamp.now(tz='Asia/Jakarta').tz_localize(None)
+            delta = now_wib - start_time
             total_seconds = int(delta.total_seconds())
-            if total_seconds < 0: return "0m"
+            
+            if total_seconds < 0: return "0m" # Kalau masih aneh, tetep diamankan
+            
             days, remainder = divmod(total_seconds, 86400)
             hours, remainder = divmod(remainder, 3600)
             minutes, _ = divmod(remainder, 60)
@@ -128,15 +132,21 @@ if df_dapot is not None and ume_file:
             res.append(f"{minutes}m")
             return " ".join(res)
             
-        # Fungsi ringkas buat bikin tabel summary Up/Down
+        # --- FIX: Ditambah presentase dan Total di tabel summary ---
         def get_summary_table(col_name):
             if col_name not in df_dapot.columns: return pd.DataFrame()
             summary = pd.crosstab(df_dapot[col_name], df_dapot['Status']).reset_index()
             for s in ['Up', 'Down']:
                 if s not in summary.columns: summary[s] = 0
             summary = summary.rename(columns={'Down': 'Jumlah Down', 'Up': 'Jumlah Up'})
+            
+            # Hitung Total dan Persentase
+            summary['Total'] = summary['Jumlah Down'] + summary['Jumlah Up']
+            summary['% Down'] = (summary['Jumlah Down'] / summary['Total'] * 100).round(1).astype(str) + '%'
+            summary['% Up'] = (summary['Jumlah Up'] / summary['Total'] * 100).round(1).astype(str) + '%'
+            
             # Urutkan berdasarkan Jumlah Down terbanyak
-            return summary.sort_values('Jumlah Down', ascending=False)[[col_name, 'Jumlah Down', 'Jumlah Up']]
+            return summary.sort_values('Jumlah Down', ascending=False)[[col_name, 'Jumlah Down', 'Jumlah Up', '% Down', '% Up', 'Total']]
 
         # ==========================================
         # SPLIT SCREEN DASHBOARD
@@ -159,7 +169,6 @@ if df_dapot is not None and ume_file:
             c1.success(f"✅ **Up:** {up_count}")
             c2.error(f"🚨 **Down:** {down_count}")
             
-            # Tab sekarang selalu muncul untuk melihat keseluruhan area
             tab1, tab2, tab3, tab4 = st.tabs(["Kabupaten", "Kecamatan", "Hub/Non Hubsite", "Sites"])
             
             with tab1:
