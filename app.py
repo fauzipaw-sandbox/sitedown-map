@@ -53,14 +53,21 @@ if df_dapot is not None:
                 st.error("Kolom 'Site_ID' tidak ditemukan di file Dapot!")
                 st.stop()
 
-            # Rule Down 2G dan 4G
-            target_codes = [199087337, 1014]
-            target_names = ['Site Abis control link broken', 'The link between the server and the ME is broken']
+            # --- RULE FILTERING ALARM DOWN ---
+            # 1. Input power-off & Position mengandung 'Equipment=1'
+            cond_power = (df_ume['Alarm Code Name'].str.contains('Input power-off', case=False, na=False)) & \
+                         (df_ume['Position'].astype(str).str.contains('Equipment=1', case=False, na=False))
             
-            # Filter ume yang down
-            df_down = df_ume[(df_ume['Alarm Code'].isin(target_codes)) | 
-                             (df_ume['Specific Problem'].isin(target_names)) | 
-                             (df_ume['Alarm Code Name'].isin(target_names))]
+            # 2. The link between the server and the ME is broken
+            cond_link1 = (df_ume['Specific Problem'].str.contains('The link between the server and the ME is broken', case=False, na=False)) | \
+                         (df_ume['Alarm Code Name'].str.contains('The link between the server and the ME is broken', case=False, na=False))
+            
+            # 3. Site Abis control link broken
+            cond_link2 = (df_ume['Specific Problem'].str.contains('Site Abis control link broken', case=False, na=False)) | \
+                         (df_ume['Alarm Code Name'].str.contains('Site Abis control link broken', case=False, na=False))
+            
+            # Gabungkan semua kondisi
+            df_down = df_ume[cond_power | cond_link1 | cond_link2]
                              
             site_down_list = df_down['ME ID Clean'].dropna().unique()
             
@@ -93,16 +100,30 @@ if df_dapot is not None:
                     
                     if status == 'Down':
                         color = 'red'
-                        icon = 'remove-sign'
                     else:
                         color = 'green'
-                        icon = 'ok-sign'
                         
                     popup_text = f"<b>Site Name:</b> {site_name}<br><b>Site ID:</b> {site_id}<br><b>Status:</b> {status}"
+                    
+                    # Buat titik (mark) kecil
+                    folium.CircleMarker(
+                        location=[lat, lon],
+                        radius=4, # Ukuran titik
+                        color=color,
+                        fill=True,
+                        fill_color=color,
+                        fill_opacity=0.9,
+                        popup=folium.Popup(popup_text, max_width=300)
+                    ).add_to(m)
+
+                    # Buat label teks Site ID di sebelah titik
                     folium.Marker(
                         location=[lat, lon],
-                        popup=folium.Popup(popup_text, max_width=300),
-                        icon=folium.Icon(color=color, icon=icon)
+                        icon=folium.DivIcon(
+                            icon_size=(150, 36),
+                            icon_anchor=(0, 0),
+                            html=f'<div style="font-size: 8pt; font-weight: bold; color: {color}; margin-left: 8px; text-shadow: 1px 1px 2px white;">{site_id}</div>'
+                        )
                     ).add_to(m)
                 
                 st_folium(m, width=1200, height=600)
