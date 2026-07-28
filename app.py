@@ -46,10 +46,11 @@ if df_dapot is not None:
                 st.error("Kolom 'ME ID' tidak ditemukan di file UME!")
                 st.stop()
                 
-            if 'Site ID' in df_dapot.columns:
-                df_dapot['Site ID Clean'] = df_dapot['Site ID'].apply(clean_id)
+            # PENYESUAIAN NAMA KOLOM DAPOT: Site_ID
+            if 'Site_ID' in df_dapot.columns:
+                df_dapot['Site ID Clean'] = df_dapot['Site_ID'].apply(clean_id)
             else:
-                st.error("Kolom 'Site ID' tidak ditemukan di file Dapot!")
+                st.error("Kolom 'Site_ID' tidak ditemukan di file Dapot!")
                 st.stop()
 
             # Rule Down 2G dan 4G
@@ -69,25 +70,25 @@ if df_dapot is not None:
             st.divider()
             st.subheader("📍 Peta Persebaran Site")
             
-            # Bikin Map
-            if 'Latitude' in df_dapot.columns and 'Longitude' in df_dapot.columns:
+            # PENYESUAIAN NAMA KOLOM DAPOT: LAT dan LONG
+            if 'LAT' in df_dapot.columns and 'LONG' in df_dapot.columns:
                 # Konversi comma jadi titik kalau format lat/longnya pake koma Indo, lalu casting ke float
-                df_dapot['Latitude'] = df_dapot['Latitude'].astype(str).str.replace(',', '.').astype(float)
-                df_dapot['Longitude'] = df_dapot['Longitude'].astype(str).str.replace(',', '.').astype(float)
+                df_dapot['LAT'] = df_dapot['LAT'].astype(str).str.replace(',', '.').astype(float)
+                df_dapot['LONG'] = df_dapot['LONG'].astype(str).str.replace(',', '.').astype(float)
                 
                 # Drop baris yang Latitude atau Longitudenya kosong/NaN biar folium ga error
-                df_dapot = df_dapot.dropna(subset=['Latitude', 'Longitude'])
+                df_dapot = df_dapot.dropna(subset=['LAT', 'LONG'])
                 
-                center_lat = df_dapot['Latitude'].mean()
-                center_lon = df_dapot['Longitude'].mean()
+                center_lat = df_dapot['LAT'].mean()
+                center_lon = df_dapot['LONG'].mean()
                 
                 m = folium.Map(location=[center_lat, center_lon], zoom_start=10)
                 
                 for idx, row in df_dapot.iterrows():
-                    lat = row['Latitude']
-                    lon = row['Longitude']
-                    site_name = row.get('Site Name', 'Unknown')
-                    site_id = row['Site ID']
+                    lat = row['LAT']
+                    lon = row['LONG']
+                    site_name = row.get('Site_Name', 'Unknown')
+                    site_id = row['Site_ID']
                     status = row['Status']
                     
                     if status == 'Down':
@@ -118,9 +119,9 @@ if df_dapot is not None:
                 # Tampilkan tabel yang down biar gampang laporannya
                 if down_count > 0:
                     st.write("**Detail Site Down:**")
-                    st.dataframe(df_dapot[df_dapot['Status'] == 'Down'][['Site ID', 'Site Name', 'Latitude', 'Longitude']], use_container_width=True)
+                    st.dataframe(df_dapot[df_dapot['Status'] == 'Down'][['Site_ID', 'Site_Name', 'LAT', 'LONG']], use_container_width=True)
             else:
-                st.error("Kolom 'Latitude' dan 'Longitude' wajib ada di file Dapot!")
+                st.error("Kolom 'LAT' dan 'LONG' wajib ada di file Dapot!")
                 
         except Exception as e:
             st.error(f"Terjadi error pas narik/proses data: {e}")
