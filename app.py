@@ -47,7 +47,6 @@ def get_nearest_up_sites(lat, lon, df_up, k=2):
     closest_idx = distances.nsmallest(k).index
     closest = df_up.loc[closest_idx]
     
-    # Return list Site_ID (buat tabel) dan list NE_CLEAN (buat rubah warna di peta)
     return closest['Site_ID'].tolist(), closest['NE_CLEAN'].tolist()
 
 # --- 3. HEADER & UPLOAD SECTION ---
@@ -58,13 +57,13 @@ with col_title:
 with col_upload:
     ume_file = st.file_uploader("Upload UME (fm-active.xlsx)", type=['xlsx'], label_visibility="collapsed")
 
-with st.spinner('⏳ Lagi narik data Dapot dari Google Sheets...'):
+with st.spinner('⏳ Sedang menarik data Dapot dari Google Sheets...'):
     df_dapot = load_dapot()
 
 # --- 4. PROSES DATA & RENDER ---
 if df_dapot is not None and ume_file:
     try:
-        with st.spinner('⏳ Lagi nge-proses file UME dan ngebangun kalkulasi area. Sabar ya, Zi...'):
+        with st.spinner('⏳ Memproses data UME dan mengkalkulasi area...'):
             df_ume = pd.read_excel(ume_file)
             
             def clean_id(text):
@@ -74,7 +73,6 @@ if df_dapot is not None and ume_file:
             df_ume['ME_CLEAN'] = df_ume['ME ID'].apply(clean_id) if 'ME ID' in df_ume.columns else st.stop()
             df_dapot['NE_CLEAN'] = df_dapot['NE ID'].apply(clean_id) if 'NE ID' in df_dapot.columns else st.stop()
 
-            # Bersihkan Koordinat
             if 'LAT' in df_dapot.columns and 'LONG' in df_dapot.columns:
                 df_dapot['LAT'] = df_dapot['LAT'].astype(str).str.replace(',', '.').astype(float)
                 df_dapot['LONG'] = df_dapot['LONG'].astype(str).str.replace(',', '.').astype(float)
@@ -86,7 +84,6 @@ if df_dapot is not None and ume_file:
             if 'Hub site' in df_dapot.columns:
                 df_dapot['Hub site'] = df_dapot['Hub site'].fillna('Non Hub')
 
-            # Extract ALL Alarms for Popup
             if 'Occurrence Time' in df_ume.columns:
                 df_ume['Alarm_Detail'] = "• " + df_ume['Alarm Code Name'].astype(str) + " (" + df_ume['Occurrence Time'].astype(str) + ")"
             else:
@@ -94,7 +91,6 @@ if df_dapot is not None and ume_file:
             
             all_alarm_dict = df_ume.groupby('ME_CLEAN')['Alarm_Detail'].apply(lambda x: "<br>".join(x)).to_dict()
 
-            # Rule Down Strict
             cond_power = (df_ume['Alarm Code Name'].str.contains('Input power-off', case=False, na=False)) & \
                          (df_ume['Position'].astype(str).str.strip() == 'Equipment=1')
                          
@@ -115,14 +111,12 @@ if df_dapot is not None and ume_file:
             site_down_list = df_down['ME_CLEAN'].dropna().unique()
             df_dapot['Status'] = df_dapot['NE_CLEAN'].apply(lambda x: 'Down' if x in site_down_list else 'Up')
 
-            # Kalkulasi Suggestion Nearest UP Sites (Berbasis Site ID)
             df_up_all = df_dapot[(df_dapot['Status'] == 'Up') & df_dapot['LAT'].notna() & df_dapot['LONG'].notna()]
             suggestion_site_ids = {}
             suggested_up_ids = set()
             
             for idx, row in df_dapot[df_dapot['Status'] == 'Down'].iterrows():
                 site_ids, ne_cleans = get_nearest_up_sites(row['LAT'], row['LONG'], df_up_all, k=2)
-                # Simpan list Site ID murni, bukan teks koma (biar gampang di-explode nantinya)
                 suggestion_site_ids[row['NE_CLEAN']] = site_ids if site_ids else ["-"]
                 suggested_up_ids.update(ne_cleans)
 
@@ -162,10 +156,11 @@ if df_dapot is not None and ume_file:
             
             # --- KOLOM KIRI (SUMMARY TABEL) ---
             with col_stats:
-                col_stat_text, col_stat_toggle = st.columns([2, 1])
-                col_stat_text.subheader("📊 Summary Status")
-                # Default OFF
-                show_labels = col_stat_toggle.toggle("Show Site ID", value=False)
+                # Modifikasi lebar kolom title dan toggle
+                col_stat_text, col_stat_toggle1, col_stat_toggle2 = st.columns([2, 1, 1])
+                col_stat_text.subheader("📊 Summary")
+                show_labels = col_stat_toggle1.toggle("Show Site ID", value=False)
+                show_legend = col_stat_toggle2.toggle("Show Legend", value=True)
                 
                 up_count = len(df_dapot[df_dapot['Status'] == 'Up'])
                 down_count = len(df_dapot[df_dapot['Status'] == 'Down'])
@@ -220,19 +215,21 @@ if df_dapot is not None and ume_file:
                             control=True
                         ).add_to(m)
                         
-                        # --- TAMBAHAN LEGEND DI MAPS ---
-                        legend_html = '''
-                        <div style="position: fixed; 
-                                    bottom: 20px; left: 20px; width: 170px; height: 95px; 
-                                    border:2px solid grey; z-index:9999; font-size:12px;
-                                    background-color:white; padding: 10px; border-radius: 5px; opacity: 0.95;">
-                        <b>Map Legend</b><br>
-                        <i style="background:#e60000; width: 12px; height: 12px; float: left; margin-right: 8px; margin-top: 3px; border-radius: 50%;"></i> Down<br>
-                        <i style="background:#00802b; width: 12px; height: 12px; float: left; margin-right: 8px; margin-top: 3px; border-radius: 50%;"></i> Up<br>
-                        <i style="background:#0066ff; width: 12px; height: 12px; float: left; margin-right: 8px; margin-top: 3px; border-radius: 50%;"></i> Neighbour to optim<br>
-                        </div>
-                        '''
-                        m.get_root().html.add_child(folium.Element(legend_html))
+                        # --- HTML LEGEND UPDATE (Force Black Text & Hub Site Star) ---
+                        if show_legend:
+                            legend_html = '''
+                            <div style="position: fixed; 
+                                        bottom: 20px; left: 20px; width: 190px; height: 120px; 
+                                        border:2px solid grey; z-index:9999; font-size:12px; color:black;
+                                        background-color:white; padding: 10px; border-radius: 5px; opacity: 0.95;">
+                            <b style="color:black;">Map Legend</b><br>
+                            <i style="background:#e60000; width: 12px; height: 12px; float: left; margin-right: 8px; margin-top: 3px; border-radius: 50%;"></i> <span style="color:black;">Down</span><br>
+                            <i style="background:#00802b; width: 12px; height: 12px; float: left; margin-right: 8px; margin-top: 3px; border-radius: 50%;"></i> <span style="color:black;">Up</span><br>
+                            <i style="background:#0066ff; width: 12px; height: 12px; float: left; margin-right: 8px; margin-top: 3px; border-radius: 50%;"></i> <span style="color:black;">Neighbour to optim</span><br>
+                            <div style="color:#444; font-size:16px; float:left; margin-right:7px; margin-top:-3px; margin-left:-2px;">★</div> <span style="color:black;">Hub site</span><br>
+                            </div>
+                            '''
+                            m.get_root().html.add_child(folium.Element(legend_html))
                         
                         for idx, row in df_map.iterrows():
                             lat, lon = row['LAT'], row['LONG']
@@ -264,7 +261,7 @@ if df_dapot is not None and ume_file:
                             durasi_str = f" (Durasi: {format_durasi(start_dt)})" if status == 'Down' else ""
                             
                             popup_html = f"""
-                            <div style="min-width: 250px; font-size:12px;">
+                            <div style="min-width: 250px; font-size:12px; color:black;">
                                 <b style="font-size:14px;">{site_name}</b> <br>
                                 Site ID: <b>{site_id}</b><br>
                                 Status: {status_label}{durasi_str}<br>
@@ -322,7 +319,6 @@ if df_dapot is not None and ume_file:
                 df_dapot_down = df_dapot_down.sort_values(by='Occurrence_Time', ascending=True, na_position='last')
                 df_dapot_down['Durasi Down'] = df_dapot_down['Occurrence_Time'].apply(format_durasi)
                 
-                # Assign list suggestion, lalu explode barisnya
                 df_dapot_down['Suggestion (Nearest Up)'] = df_dapot_down['NE_CLEAN'].map(suggestion_site_ids)
                 df_dapot_down = df_dapot_down.explode('Suggestion (Nearest Up)')
                 
@@ -343,7 +339,6 @@ if df_dapot is not None and ume_file:
                 kolom_ada = [k for k in kolom_detail.keys() if k in df_dapot_down.columns]
                 df_detail_final = df_dapot_down[kolom_ada].rename(columns=kolom_detail)
                 
-                # Freeze kolom Site ID
                 if 'Site ID' in df_detail_final.columns:
                     df_detail_final = df_detail_final.set_index('Site ID')
                     
