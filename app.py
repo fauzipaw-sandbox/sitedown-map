@@ -5,27 +5,41 @@ from folium import MacroElement
 from jinja2 import Template
 from streamlit_folium import st_folium
 
-# Layout WIDE dan sidebar disembunyiin
+# --- 1. KONFIGURASI LAYOUT 1 HALAMAN (NO SCROLL) ---
 st.set_page_config(page_title="Site Down Monitoring", layout="wide", initial_sidebar_state="collapsed")
 
-# Styling biar padding atas gak terlalu lebar
-st.markdown("<style> .block-container { padding-top: 1rem; padding-bottom: 0rem; } </style>", unsafe_allow_html=True)
+st.markdown("""
+    <style>
+        /* Buang semua ruang kosong, header, dan footer biar nge-fit 1 layar */
+        .block-container { padding-top: 1rem; padding-bottom: 0rem; padding-left: 2rem; padding-right: 2rem; max-width: 100%; }
+        header { visibility: hidden; }
+        #MainMenu { visibility: hidden; }
+        footer { visibility: hidden; }
+        /* Rapikan jarak antar elemen */
+        .stTabs [data-baseweb="tab-list"] { gap: 10px; }
+        .st-emotion-cache-1y4p8pa { padding-top: 0rem; }
+    </style>
+""", unsafe_allow_html=True)
 
-st.title("🗺️ Site Down Monitoring")
-st.markdown("Monitoring status Site (Up/Down) berdasarkan alarm UME.")
+# --- 2. DIALOG POPUP UNTUK KLIK TABEL ---
+@st.dialog("📋 Detail Site Down")
+def show_detail_popup(kategori, nilai, df_down):
+    st.markdown(f"Berikut adalah daftar site yang down pada **{kategori}: {nilai}**")
+    detail_df = df_down[df_down[kategori] == nilai][['Site_ID', 'Site_Name', 'LAT', 'LONG']]
+    st.dataframe(detail_df, use_container_width=True, hide_index=True)
 
+# --- 3. FUNGSI TARIK DATA ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/11pp1YavJsR6wnYcvs0Z6B94KM75clu7FQgRy7sdEQ4g/export?format=csv&gid=0"
 
 @st.cache_data(ttl=600)
 def load_dapot():
     try:
-        df = pd.read_csv(SHEET_URL)
-        return df
+        return pd.read_csv(SHEET_URL)
     except Exception as e:
-        st.error(f"Gagal narik data Dapot. Error: {e}")
+        st.error(f"Gagal narik Dapot. Error: {e}")
         return None
 
-# --- SCRIPT CUSTOM UNTUK TAMPILIN TEKS SAAT ZOOM IN ---
+# --- 4. JS MACRO UNTUK ZOOM LABEL ---
 class ZoomLabel(MacroElement):
     _template = Template("""
     {% macro script(this, kwargs) %}
@@ -34,7 +48,6 @@ class ZoomLabel(MacroElement):
         var currentZoom = map.getZoom();
         var labels = document.getElementsByClassName('site-label');
         for (var i = 0; i < labels.length; i++) {
-            // Teks muncul kalau level zoom 13 atau lebih dekat
             if (currentZoom >= 13) {
                 labels[i].style.display = 'block';
             } else {
@@ -42,19 +55,22 @@ class ZoomLabel(MacroElement):
             }
         }
     });
-    // Trigger event saat pertama kali map diload
     map.fire('zoomend');
     {% endmacro %}
     """)
 
-# --- UPLOAD SECTION ---
-col_up1, col_up2 = st.columns([1, 2])
-with col_up1:
-    ume_file = st.file_uploader("Upload Data UME (fm-active.xlsx)", type=['xlsx'], label_visibility="collapsed")
+# --- 5. HEADER & UPLOAD SECTION (Dibuat sebaris) ---
+col_title, col_upload = st.columns([2, 1])
+with col_title:
+    st.title("🗺️ Site Down Monitoring")
+    st.markdown("Monitoring status Site (Up/Down) berdasarkan alarm UME.")
+with col_upload:
+    ume_file = st.file_uploader("Upload UME (fm-active.xlsx)", type=['xlsx'], label_visibility="collapsed")
 
 with st.spinner('Menyiapkan data...'):
     df_dapot = load_dapot()
 
+# --- 6. PROSES DATA & RENDER ---
 if df_dapot is not None and ume_file:
     try:
         df_ume = pd.read_excel(ume_file)
@@ -86,17 +102,14 @@ if df_dapot is not None and ume_file:
         site_down_list = df_down['ME_CLEAN'].dropna().unique()
         
         df_dapot['Status'] = df_dapot['NE_CLEAN'].apply(lambda x: 'Down' if x in site_down_list else 'Up')
-        
-        st.divider()
 
         # ==========================================
-        # SPLIT SCREEN DASHBOARD
+        # SPLIT SCREEN DASHBOARD (KIRI & KANAN)
         # ==========================================
-        col_stats, col_map = st.columns([1.5, 2.5]) # Porsi lebar disesuaikan biar tabelnya kebaca jelas
+        col_stats, col_map = st.columns([1.5, 2.5]) 
         
-        # --- KOLOM KIRI (SUMMARY & TABEL) ---
+        # --- KOLOM KIRI (SUMMARY & TABEL KLIKABLE) ---
         with col_stats:
-            st.subheader("📊 Summary Status")
             up_count = len(df_dapot[df_dapot['Status'] == 'Up'])
             down_count = len(df_dapot[df_dapot['Status'] == 'Down'])
             
@@ -108,25 +121,33 @@ if df_dapot is not None and ume_file:
                 df_dapot_down = df_dapot[df_dapot['Status'] == 'Down'].copy()
                 df_dapot_down['Hub site'] = df_dapot_down['Hub site'].fillna('Non Hub')
                 
-                tab1, tab2, tab3, tab4 = st.tabs(["Kabupaten", "Kecamatan", "Hub Site", "Data Lengkap"])
+                tab1, tab2, tab3 = st.tabs(["Kabupaten", "Kecamatan", "Hub Site"])
+                st.caption("💡 *Klik baris pada tabel untuk melihat popup detail site.*")
                 
-                # Fungsi agregasi buat nampilin list site ID di tabel langsung
                 with tab1:
-                    kab_df = df_dapot_down.groupby('Kota/Kab').agg(Jumlah_Down=('Site_ID', 'count'), List_Site_ID=('Site_ID', lambda x: ', '.join(x))).reset_index()
-                    st.dataframe(kab_df, height=450, use_container_width=True)
+                    kab_df = df_dapot_down.groupby('Kota/Kab').size().reset_index(name='Jumlah Down')
+                    # on_select="rerun" bikin tabel ini bisa diklik!
+                    event_kab = st.dataframe(kab_df, height=350, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+                    if len(event_kab.selection.rows) > 0:
+                        selected_val = kab_df.iloc[event_kab.selection.rows[0]]['Kota/Kab']
+                        show_detail_popup('Kota/Kab', selected_val, df_dapot_down)
+                        
                 with tab2:
-                    kec_df = df_dapot_down.groupby('Kecamatan').agg(Jumlah_Down=('Site_ID', 'count'), List_Site_ID=('Site_ID', lambda x: ', '.join(x))).reset_index()
-                    st.dataframe(kec_df, height=450, use_container_width=True)
+                    kec_df = df_dapot_down.groupby('Kecamatan').size().reset_index(name='Jumlah Down')
+                    event_kec = st.dataframe(kec_df, height=350, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+                    if len(event_kec.selection.rows) > 0:
+                        selected_val = kec_df.iloc[event_kec.selection.rows[0]]['Kecamatan']
+                        show_detail_popup('Kecamatan', selected_val, df_dapot_down)
+                        
                 with tab3:
-                    hub_df = df_dapot_down.groupby('Hub site').agg(Jumlah_Down=('Site_ID', 'count'), List_Site_ID=('Site_ID', lambda x: ', '.join(x))).reset_index()
-                    st.dataframe(hub_df, height=450, use_container_width=True)
-                with tab4:
-                    st.dataframe(df_dapot_down[['Site_ID', 'Hub site', 'Site_Name', 'Kota/Kab', 'Kecamatan', 'LAT', 'LONG']], height=450, use_container_width=True)
+                    hub_df = df_dapot_down.groupby('Hub site').size().reset_index(name='Jumlah Down')
+                    event_hub = st.dataframe(hub_df, height=350, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+                    if len(event_hub.selection.rows) > 0:
+                        selected_val = hub_df.iloc[event_hub.selection.rows[0]]['Hub site']
+                        show_detail_popup('Hub site', selected_val, df_dapot_down)
 
         # --- KOLOM KANAN (MAPS) ---
         with col_map:
-            st.subheader("📍 Peta Interaktif")
-            
             if 'LAT' in df_dapot.columns and 'LONG' in df_dapot.columns:
                 df_dapot['LAT'] = df_dapot['LAT'].astype(str).str.replace(',', '.').astype(float)
                 df_dapot['LONG'] = df_dapot['LONG'].astype(str).str.replace(',', '.').astype(float)
@@ -143,7 +164,6 @@ if df_dapot is not None and ume_file:
                     control=True
                 ).add_to(m)
                 
-                # Eksekusi Macro JavaScript buat zoom teks
                 m.add_child(ZoomLabel())
                 
                 for idx, row in df_dapot.iterrows():
@@ -161,7 +181,6 @@ if df_dapot is not None and ume_file:
                     
                     color = 'red' if status == 'Down' else 'green'
                     
-                    # Popup Custom (NE ID dihapus, Site Name di atas)
                     if status == 'Down':
                         alarms_terkait = alarm_dict.get(ne_id, "Tidak ada data historis")
                         popup_html = f"""
@@ -189,14 +208,14 @@ if df_dapot is not None and ume_file:
                     
                     tooltip_text = f"{site_name} ({site_id})"
                     
-                    # Tambah label gaib (class site-label) di kordinat yang sama, dikontrol oleh JS dari class ZoomLabel
-                    label_html = f'<div class="site-label" style="display:none; font-size:9pt; font-weight:bold; color:{color}; text-shadow:1px 1px 2px white; white-space:nowrap; margin-left:12px; margin-top:-5px;">{site_id}</div>'
+                    # LABEL ZOOM-IN (Desain Pill/Badge Solid biar sangat mudah dibaca)
+                    label_html = f'<div class="site-label" style="display:none; font-size:10px; font-weight:bold; color:#000; background-color:rgba(255,255,255,0.95); border:2px solid {color}; border-radius:5px; padding:2px 5px; box-shadow: 0px 2px 4px rgba(0,0,0,0.4); white-space:nowrap; margin-left:10px; margin-top:-8px;">{site_id}</div>'
+                    
                     folium.Marker(
                         location=[lat, lon],
                         icon=folium.DivIcon(html=label_html)
                     ).add_to(m)
 
-                    # Logic Hub = Bintang, Non-Hub = Bulat
                     if is_hub:
                         folium.Marker(
                             location=[lat, lon],
@@ -218,7 +237,9 @@ if df_dapot is not None and ume_file:
                         ).add_to(m)
                 
                 folium.LayerControl(position='topright').add_to(m)
-                st_folium(m, use_container_width=True, height=600, returned_objects=[])
+                
+                # Height disesuaikan biar nggak melewati batas bawah layar laptop
+                st_folium(m, use_container_width=True, height=520, returned_objects=[])
                 
             else:
                 st.error("Kolom 'LAT' dan 'LONG' tidak valid!")
