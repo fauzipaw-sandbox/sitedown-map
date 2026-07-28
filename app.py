@@ -5,7 +5,7 @@ from streamlit_folium import st_folium
 
 st.set_page_config(page_title="Site Down/Up Mapping", layout="wide")
 st.title("🗺️ Mapping Status Site (Up/Down)")
-st.markdown("Dashboard ini narik data Dapot langsung dari Google Sheets dan mencocokkannya dengan file UME (ME ID vs NE ID).")
+st.markdown("Dashboard ini narik data Dapot langsung dari Google Sheets dan mencocokkannya dengan file UME. **[Responsive Mode]**")
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/11pp1YavJsR6wnYcvs0Z6B94KM75clu7FQgRy7sdEQ4g/export?format=csv&gid=0"
 
@@ -31,10 +31,9 @@ if df_dapot is not None:
         try:
             df_ume = pd.read_excel(ume_file)
             
-            # --- NEW LOGIC: Match ME ID (UME) langsung ke NE ID (Dapot) ---
+            # --- LOGIC: Match ME ID (UME) ke NE ID (Dapot) ---
             def clean_id(text):
                 val = str(text).strip()
-                # Buang desimal .0 bawaan pandas kalau kebaca float
                 if val.endswith('.0'):
                     return val[:-2]
                 return val
@@ -61,13 +60,57 @@ if df_dapot is not None:
             cond_link2 = (df_ume['Specific Problem'].str.contains('Site Abis control link broken', case=False, na=False)) | \
                          (df_ume['Alarm Code Name'].str.contains('Site Abis control link broken', case=False, na=False))
             
-            df_down = df_ume[cond_power | cond_link1 | cond_link2]
+            df_down = df_ume[cond_power | cond_link1 | cond_link2].copy()
+            
+            # --- BIKIN DICTIONARY ALARM BUAT POPUP ---
+            # Menggabungkan nama alarm dan waktunya
+            if 'Occurrence Time' in df_down.columns:
+                df_down['Alarm_Detail'] = "• " + df_down['Alarm Code Name'].astype(str) + " (" + df_down['Occurrence Time'].astype(str) + ")"
+            else:
+                df_down['Alarm_Detail'] = "• " + df_down['Alarm Code Name'].astype(str)
+            
+            # Grouping alarm berdasarkan ME ID biar kalau 1 site ada 3 alarm, kerangkum semua
+            alarm_dict = df_down.groupby('ME_CLEAN')['Alarm_Detail'].apply(lambda x: "<br>".join(x)).to_dict()
                              
             site_down_list = df_down['ME_CLEAN'].dropna().unique()
             
-            # Tentukan Status berdasarkan match NE ID di dapot dengan list ME ID yang down
+            # Tentukan Status
             df_dapot['Status'] = df_dapot['NE_CLEAN'].apply(lambda x: 'Down' if x in site_down_list else 'Up')
             
+            st.divider()
+            
+            # --- RESPONSIVE LAYOUT SUMMARY ---
+            st.subheader("📊 Summary Status Site")
+            col_up, col_down = st.columns(2)
+            up_count = len(df_dapot[df_dapot['Status'] == 'Up'])
+            down_count = len(df_dapot[df_dapot['Status'] == 'Down'])
+            
+            col_up.success(f"✅ **Total Site Up:** {up_count}")
+            col_down.error(f"🚨 **Total Site Down:** {down_count}")
+            
+            # Menampilkan breakdown breakdown dengan Tabs biar responsif dan nggak menuhin layar
+            if down_count > 0:
+                df_dapot_down = df_dapot[df_dapot['Status'] == 'Down']
+                
+                tab1, tab2, tab3, tab4 = st.tabs(["🏙️ By Kabupaten", "🏘️ By Kecamatan", "📡 By Hub Site", "📋 Detail All Data"])
+                
+                with tab1:
+                    if 'Kota/Kab' in df_dapot_down.columns:
+                        st.dataframe(df_dapot_down['Kota/Kab'].value_counts().reset_index().rename(columns={'count':'Jumlah Down', 'Kota/Kab':'Kabupaten'}), use_container_width=True)
+                
+                with tab2:
+                    if 'Kecamatan' in df_dapot_down.columns:
+                        st.dataframe(df_dapot_down['Kecamatan'].value_counts().reset_index().rename(columns={'count':'Jumlah Down'}), use_container_width=True)
+                        
+                with tab3:
+                    if 'Hub site' in df_dapot_down.columns:
+                        # Isi yang kosong dengan 'Non Hub'
+                        hub_counts = df_dapot_down['Hub site'].fillna('Non Hub').value_counts().reset_index().rename(columns={'count':'Jumlah Down'})
+                        st.dataframe(hub_counts, use_container_width=True)
+                        
+                with tab4:
+                    st.dataframe(df_dapot_down[['Site_ID', 'NE ID', 'Site_Name', 'Kota/Kab', 'Kecamatan', 'Hub site', 'LAT', 'LONG']], use_container_width=True)
+
             st.divider()
             st.subheader("📍 Peta Persebaran Site")
             
@@ -86,15 +129,30 @@ if df_dapot is not None:
                     lon = row['LONG']
                     site_name = row.get('Site_Name', 'Unknown')
                     site_id = row.get('Site_ID', 'Unknown')
-                    ne_id = row.get('NE ID', 'Unknown')
+                    ne_id = row.get('NE_CLEAN', 'Unknown')
                     status = row['Status']
                     
                     color = 'red' if status == 'Down' else 'green'
                     
-                    # Popup kalau titiknya di-klik
-                    popup_html = f"<b>Site ID: {site_id}</b><br>NE ID: {ne_id}<br>{site_name}<br>Status: {status}"
+                    # Konfigurasi Popup Maps Custom
+                    if status == 'Down':
+                        alarms_terkait = alarm_dict.get(ne_id, "Data alarm tidak terbaca")
+                        popup_html = f"""
+                        <div style="min-width: 250px;">
+                            <b>Site ID: {site_id}</b><br>
+                            NE ID: {ne_id}<br>
+                            {site_name}<br>
+                            Status: <b style="color:red;">{status}</b>
+                            <hr style="margin: 5px 0;">
+                            <b style="font-size:12px;">Daftar Alarm:</b><br>
+                            <div style="font-size:11px; max-height:120px; overflow-y:auto; background-color:#f9f9f9; padding:5px; border-radius:4px;">
+                                {alarms_terkait}
+                            </div>
+                        </div>
+                        """
+                    else:
+                        popup_html = f"<b>Site ID: {site_id}</b><br>NE ID: {ne_id}<br>{site_name}<br>Status: <b style='color:green;'>{status}</b>"
                     
-                    # Tooltip muncul pas di-hover 
                     folium.CircleMarker(
                         location=[lat, lon],
                         radius=4,
@@ -103,25 +161,15 @@ if df_dapot is not None:
                         fill=True,
                         fill_color=color,
                         fill_opacity=0.8,
-                        popup=folium.Popup(popup_html, max_width=300),
+                        popup=folium.Popup(popup_html, max_width=400),
                         tooltip=f"{site_id}" 
                     ).add_to(m)
                 
-                st_folium(m, width=1200, height=600)
+                # use_container_width=True bikin maps otomatis nyesuain lebar layar hp/laptop
+                st_folium(m, use_container_width=True, height=600, returned_objects=[])
                 
-                col_up, col_down = st.columns(2)
-                up_count = len(df_dapot[df_dapot['Status'] == 'Up'])
-                down_count = len(df_dapot[df_dapot['Status'] == 'Down'])
-                
-                col_up.success(f"✅ Total Site Up: {up_count}")
-                col_down.error(f"🚨 Total Site Down: {down_count}")
-                
-                if down_count > 0:
-                    st.write("**Detail Site Down:**")
-                    # Tampilkan Site_ID dan NE ID biar jelas laporannya
-                    st.dataframe(df_dapot[df_dapot['Status'] == 'Down'][['Site_ID', 'NE ID', 'Site_Name', 'LAT', 'LONG']], use_container_width=True)
             else:
-                st.error("Kolom 'LAT' dan 'LONG' wajib ada!")
+                st.error("Kolom 'LAT' dan 'LONG' wajib ada di Dapot!")
                 
         except Exception as e:
             st.error(f"Error pas narik/proses: {e}")
