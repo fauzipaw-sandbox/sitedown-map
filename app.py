@@ -21,12 +21,21 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. DIALOG POPUP UNTUK KLIK TABEL ---
-@st.dialog("📋 Detail Site Down")
+# --- 2. DIALOG POPUP UNTUK KLIK TABEL (DIPERCANTIK) ---
+@st.dialog("🚨 Detail Site Down", width="large")
 def show_detail_popup(kategori, nilai, df_down):
-    st.markdown(f"Berikut adalah daftar site yang down pada **{kategori}: {nilai}**")
-    detail_df = df_down[df_down[kategori] == nilai][['Site_ID', 'Site_Name', 'LAT', 'LONG']]
-    st.dataframe(detail_df, use_container_width=True, hide_index=True)
+    detail_df = df_down[df_down[kategori] == nilai].reset_index(drop=True)
+    
+    # Header Popup yang lebih rapi
+    st.markdown(f"### Area {kategori}: **{nilai}**")
+    st.info(f"Terdapat **{len(detail_df)}** site yang terdeteksi down di area ini.")
+    
+    # Tabel bersih
+    st.dataframe(
+        detail_df[['Site_ID', 'Site_Name', 'LAT', 'LONG']], 
+        use_container_width=True, 
+        hide_index=True
+    )
 
 # --- 3. FUNGSI TARIK DATA ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/11pp1YavJsR6wnYcvs0Z6B94KM75clu7FQgRy7sdEQ4g/export?format=csv&gid=0"
@@ -126,7 +135,6 @@ if df_dapot is not None and ume_file:
                 
                 with tab1:
                     kab_df = df_dapot_down.groupby('Kota/Kab').size().reset_index(name='Jumlah Down')
-                    # on_select="rerun" bikin tabel ini bisa diklik!
                     event_kab = st.dataframe(kab_df, height=350, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
                     if len(event_kab.selection.rows) > 0:
                         selected_val = kab_df.iloc[event_kab.selection.rows[0]]['Kota/Kab']
@@ -208,8 +216,8 @@ if df_dapot is not None and ume_file:
                     
                     tooltip_text = f"{site_name} ({site_id})"
                     
-                    # LABEL ZOOM-IN (Desain Pill/Badge Solid biar sangat mudah dibaca)
-                    label_html = f'<div class="site-label" style="display:none; font-size:10px; font-weight:bold; color:#000; background-color:rgba(255,255,255,0.95); border:2px solid {color}; border-radius:5px; padding:2px 5px; box-shadow: 0px 2px 4px rgba(0,0,0,0.4); white-space:nowrap; margin-left:10px; margin-top:-8px;">{site_id}</div>'
+                    # LABEL ZOOM-IN (Efek Outline/Stroke Putih & pointer-events: none biar ga nutupin marker)
+                    label_html = f'<div class="site-label" style="display:none; pointer-events:none; font-size:11px; font-weight:900; color:{color}; text-shadow: -1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF, 0px 0px 3px #FFF; white-space:nowrap; margin-left:12px; margin-top:-7px;">{site_id}</div>'
                     
                     folium.Marker(
                         location=[lat, lon],
@@ -238,7 +246,7 @@ if df_dapot is not None and ume_file:
                 
                 folium.LayerControl(position='topright').add_to(m)
                 
-                # Height disesuaikan biar nggak melewati batas bawah layar laptop
+                # Height disesuaikan biar pas di layar
                 st_folium(m, use_container_width=True, height=520, returned_objects=[])
                 
             else:
