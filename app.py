@@ -79,8 +79,7 @@ if df_dapot is not None and ume_file:
         if 'Kecamatan' in df_dapot.columns:
             df_dapot['Kecamatan'] = df_dapot['Kecamatan'].apply(lambda x: str(x).title() if pd.notnull(x) else x)
 
-        # --- FIX: RULE DOWN (STRICT MATCH UNTUK EQUIPMENT=1) ---
-        # Hanya nangkep posisi yang benar-benar tulisan "Equipment=1" doang
+        # Rule Down 
         cond_power = (df_ume['Alarm Code Name'].str.contains('Input power-off', case=False, na=False)) & \
                      (df_ume['Position'].astype(str).str.strip() == 'Equipment=1')
                      
@@ -150,7 +149,8 @@ if df_dapot is not None and ume_file:
                 df_dapot_down = df_dapot[df_dapot['Status'] == 'Down'].copy()
                 df_dapot_down['Hub site'] = df_dapot_down['Hub site'].fillna('Non Hub')
                 
-                tab1, tab2, tab3, tab4 = st.tabs(["Kab", "Kecamatan", "Hub", "Data Lengkap"])
+                # UPDATE NAMA TAB DI SINI
+                tab1, tab2, tab3, tab4 = st.tabs(["Kabupaten", "Kecamatan", "Hub/Non Hubsite", "Sites"])
                 
                 with tab1:
                     kab_df = df_dapot_down.groupby('Kota/Kab').size().reset_index(name='Jumlah Down').sort_values('Jumlah Down', ascending=False)
@@ -175,6 +175,10 @@ if df_dapot is not None and ume_file:
                 
                 with tab4:
                     df_dapot_down['Occurrence_Time'] = df_dapot_down['NE_CLEAN'].map(min_occurrence)
+                    
+                    # SORTING BERDASARKAN WAKTU ALARM (Terlama = ascending order) sebelum dikonversi jadi string
+                    df_dapot_down = df_dapot_down.sort_values(by='Occurrence_Time', ascending=True, na_position='last')
+                    
                     df_dapot_down['Durasi Down'] = df_dapot_down['Occurrence_Time'].apply(format_durasi)
                     
                     kolom_detail = {
@@ -272,20 +276,17 @@ if df_dapot is not None and ume_file:
                         
                         tooltip_text = f"{site_name} ({site_id})"
                         
-                        # --- FIX: GABUNGIN MARKER DAN TEKS JADI 1 ELEMEN (Anti Bug Klik) ---
                         if is_hub:
                             shape_html = f'<div style="color:{color_hex}; font-size:18px; margin-top:-4px; margin-left:-2px; text-shadow: -1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF, 0px 0px 4px rgba(0,0,0,0.6);">★</div>'
                         else:
                             shape_html = f'<div style="width:12px; height:12px; background-color:{color_hex}; border:2px solid white; border-radius:50%; box-shadow:0px 0px 3px rgba(0,0,0,0.6);"></div>'
                             
                         if show_labels:
-                            # pointer-events: none bikin teks nggak bisa diklik (klik nembus ke titik markernya)
                             label_html = f'<div class="site-label" style="display:none; position:absolute; left:14px; top:-2px; pointer-events:none; font-size:10px; font-weight:normal; color:{color_hex}; text-shadow: -1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF, 0px 0px 3px #FFF; white-space:nowrap;">{site_id}</div>'
                         else:
                             label_html = ""
                             
-                        # Dibungkus di 1 kotak area klik (12x12px) biar Folium bacanya cuma ada 1 object per site!
-                        combined_html = f'<div style="position:relative; width:12px; height:12px;">{shape_html}{label_html}</div>'
+                        combined_html = f'<div style="position:relative; width:12px; height:12px; cursor:pointer;">{shape_html}{label_html}</div>'
 
                         folium.Marker(
                             location=[lat, lon],
