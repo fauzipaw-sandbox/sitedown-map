@@ -1,16 +1,18 @@
 import streamlit as st
 import pandas as pd
 import folium
+from folium import MacroElement
+from jinja2 import Template
 from streamlit_folium import st_folium
 
-# Layout WIDE dan sidebar disembunyiin biar kerasa kayak Dashboard beneran
-st.set_page_config(page_title="Site Down/Up Mapping", layout="wide", initial_sidebar_state="collapsed")
+# Layout WIDE dan sidebar disembunyiin
+st.set_page_config(page_title="Site Down Monitoring", layout="wide", initial_sidebar_state="collapsed")
 
 # Styling biar padding atas gak terlalu lebar
 st.markdown("<style> .block-container { padding-top: 1rem; padding-bottom: 0rem; } </style>", unsafe_allow_html=True)
 
-st.title("🗺️ Network Ops Command Center")
-st.markdown("Monitoring status Site (Up/Down) berdasarkan Dapot Google Sheets & Data UME.")
+st.title("🗺️ Site Down Monitoring")
+st.markdown("Monitoring status Site (Up/Down) berdasarkan alarm UME.")
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/11pp1YavJsR6wnYcvs0Z6B94KM75clu7FQgRy7sdEQ4g/export?format=csv&gid=0"
 
@@ -23,7 +25,29 @@ def load_dapot():
         st.error(f"Gagal narik data Dapot. Error: {e}")
         return None
 
-# --- UPLOAD SECTION (Dibuat ringkas) ---
+# --- SCRIPT CUSTOM UNTUK TAMPILIN TEKS SAAT ZOOM IN ---
+class ZoomLabel(MacroElement):
+    _template = Template("""
+    {% macro script(this, kwargs) %}
+    var map = {{ this._parent.get_name() }};
+    map.on('zoomend', function() {
+        var currentZoom = map.getZoom();
+        var labels = document.getElementsByClassName('site-label');
+        for (var i = 0; i < labels.length; i++) {
+            // Teks muncul kalau level zoom 13 atau lebih dekat
+            if (currentZoom >= 13) {
+                labels[i].style.display = 'block';
+            } else {
+                labels[i].style.display = 'none';
+            }
+        }
+    });
+    // Trigger event saat pertama kali map diload
+    map.fire('zoomend');
+    {% endmacro %}
+    """)
+
+# --- UPLOAD SECTION ---
 col_up1, col_up2 = st.columns([1, 2])
 with col_up1:
     ume_file = st.file_uploader("Upload Data UME (fm-active.xlsx)", type=['xlsx'], label_visibility="collapsed")
@@ -35,7 +59,6 @@ if df_dapot is not None and ume_file:
     try:
         df_ume = pd.read_excel(ume_file)
         
-        # --- LOGIC MATCHING ---
         def clean_id(text):
             val = str(text).strip()
             return val[:-2] if val.endswith('.0') else val
@@ -53,7 +76,7 @@ if df_dapot is not None and ume_file:
         
         df_down = df_ume[cond_power | cond_link1 | cond_link2].copy()
         
-        # Bikin Dictionary Alarm buat Popup
+        # Dictionary Alarm
         if 'Occurrence Time' in df_down.columns:
             df_down['Alarm_Detail'] = "• " + df_down['Alarm Code Name'].astype(str) + " (" + df_down['Occurrence Time'].astype(str) + ")"
         else:
@@ -67,9 +90,9 @@ if df_dapot is not None and ume_file:
         st.divider()
 
         # ==========================================
-        # SPLIT SCREEN DASHBOARD (KIRI: STATS, KANAN: MAP)
+        # SPLIT SCREEN DASHBOARD
         # ==========================================
-        col_stats, col_map = st.columns([1.2, 2.8])
+        col_stats, col_map = st.columns([1.5, 2.5]) # Porsi lebar disesuaikan biar tabelnya kebaca jelas
         
         # --- KOLOM KIRI (SUMMARY & TABEL) ---
         with col_stats:
@@ -83,20 +106,22 @@ if df_dapot is not None and ume_file:
             
             if down_count > 0:
                 df_dapot_down = df_dapot[df_dapot['Status'] == 'Down'].copy()
-                # Bersihin kolom Hub site dari NaN
                 df_dapot_down['Hub site'] = df_dapot_down['Hub site'].fillna('Non Hub')
                 
-                # Tab untuk filter biar 1 halaman tetep ringkas
                 tab1, tab2, tab3, tab4 = st.tabs(["Kabupaten", "Kecamatan", "Hub Site", "Data Lengkap"])
                 
+                # Fungsi agregasi buat nampilin list site ID di tabel langsung
                 with tab1:
-                    st.dataframe(df_dapot_down['Kota/Kab'].value_counts().reset_index().rename(columns={'count':'Down'}), height=450, use_container_width=True)
+                    kab_df = df_dapot_down.groupby('Kota/Kab').agg(Jumlah_Down=('Site_ID', 'count'), List_Site_ID=('Site_ID', lambda x: ', '.join(x))).reset_index()
+                    st.dataframe(kab_df, height=450, use_container_width=True)
                 with tab2:
-                    st.dataframe(df_dapot_down['Kecamatan'].value_counts().reset_index().rename(columns={'count':'Down'}), height=450, use_container_width=True)
+                    kec_df = df_dapot_down.groupby('Kecamatan').agg(Jumlah_Down=('Site_ID', 'count'), List_Site_ID=('Site_ID', lambda x: ', '.join(x))).reset_index()
+                    st.dataframe(kec_df, height=450, use_container_width=True)
                 with tab3:
-                    st.dataframe(df_dapot_down['Hub site'].value_counts().reset_index().rename(columns={'count':'Down'}), height=450, use_container_width=True)
+                    hub_df = df_dapot_down.groupby('Hub site').agg(Jumlah_Down=('Site_ID', 'count'), List_Site_ID=('Site_ID', lambda x: ', '.join(x))).reset_index()
+                    st.dataframe(hub_df, height=450, use_container_width=True)
                 with tab4:
-                    st.dataframe(df_dapot_down[['Site_ID', 'Hub site', 'Site_Name', 'LAT', 'LONG']], height=450, use_container_width=True)
+                    st.dataframe(df_dapot_down[['Site_ID', 'Hub site', 'Site_Name', 'Kota/Kab', 'Kecamatan', 'LAT', 'LONG']], height=450, use_container_width=True)
 
         # --- KOLOM KANAN (MAPS) ---
         with col_map:
@@ -109,7 +134,7 @@ if df_dapot is not None and ume_file:
                 
                 m = folium.Map(location=[df_dapot['LAT'].mean(), df_dapot['LONG'].mean()], zoom_start=11)
                 
-                # Tambahin Base Map Satelit (Bisa di toggle lewat LayerControl)
+                # Base Map Satelit
                 folium.TileLayer(
                     tiles='https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
                     attr='Google',
@@ -118,6 +143,9 @@ if df_dapot is not None and ume_file:
                     control=True
                 ).add_to(m)
                 
+                # Eksekusi Macro JavaScript buat zoom teks
+                m.add_child(ZoomLabel())
+                
                 for idx, row in df_dapot.iterrows():
                     lat, lon = row['LAT'], row['LONG']
                     site_id = row.get('Site_ID', 'Unknown')
@@ -125,7 +153,6 @@ if df_dapot is not None and ume_file:
                     site_name = row.get('Site_Name', 'Unknown')
                     status = row['Status']
                     
-                    # Ekstrak Info Tambahan
                     grid_type = row.get('Grid Category New', '-')
                     power_type = row.get('POWER TYPE', '-')
                     hub_val = str(row.get('Hub site', '')).strip()
@@ -134,14 +161,13 @@ if df_dapot is not None and ume_file:
                     
                     color = 'red' if status == 'Down' else 'green'
                     
-                    # Render Isi Popup Custom
+                    # Popup Custom (NE ID dihapus, Site Name di atas)
                     if status == 'Down':
                         alarms_terkait = alarm_dict.get(ne_id, "Tidak ada data historis")
                         popup_html = f"""
                         <div style="min-width: 250px; font-size:12px;">
-                            <b>Site ID: {site_id}</b> <br>
-                            NE ID: {ne_id}<br>
-                            {site_name}<br>
+                            <b style="font-size:14px;">{site_name}</b> <br>
+                            Site ID: <b>{site_id}</b><br>
                             Status: <b style="color:red;">{status}</b><br>
                             <b>Tipe:</b> {hub_status} | <b>Power:</b> {power_type} | <b>Grid:</b> {grid_type}
                             <hr style="margin: 5px 0;">
@@ -154,17 +180,23 @@ if df_dapot is not None and ume_file:
                     else:
                         popup_html = f"""
                         <div style="min-width: 200px; font-size:12px;">
-                            <b>Site ID: {site_id}</b><br>
-                            NE ID: {ne_id}<br>
-                            {site_name}<br>
+                            <b style="font-size:14px;">{site_name}</b><br>
+                            Site ID: <b>{site_id}</b><br>
                             Status: <b style="color:green;">{status}</b><br>
                             <b>Tipe:</b> {hub_status} | <b>Power:</b> {power_type} | <b>Grid:</b> {grid_type}
                         </div>
                         """
                     
-                    tooltip_text = f"{site_id} (Hub)" if is_hub else site_id
+                    tooltip_text = f"{site_name} ({site_id})"
                     
-                    # Logic Icon: Bintang Pin buat HUB, Titik Bulat buat NON-HUB
+                    # Tambah label gaib (class site-label) di kordinat yang sama, dikontrol oleh JS dari class ZoomLabel
+                    label_html = f'<div class="site-label" style="display:none; font-size:9pt; font-weight:bold; color:{color}; text-shadow:1px 1px 2px white; white-space:nowrap; margin-left:12px; margin-top:-5px;">{site_id}</div>'
+                    folium.Marker(
+                        location=[lat, lon],
+                        icon=folium.DivIcon(html=label_html)
+                    ).add_to(m)
+
+                    # Logic Hub = Bintang, Non-Hub = Bulat
                     if is_hub:
                         folium.Marker(
                             location=[lat, lon],
@@ -185,9 +217,7 @@ if df_dapot is not None and ume_file:
                             tooltip=tooltip_text
                         ).add_to(m)
                 
-                # Menambahkan tombol Layer Control biar bisa switch ke mode Satelit
                 folium.LayerControl(position='topright').add_to(m)
-                
                 st_folium(m, use_container_width=True, height=600, returned_objects=[])
                 
             else:
