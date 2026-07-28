@@ -78,6 +78,10 @@ if df_dapot is not None and ume_file:
             df_dapot['Kota/Kab'] = df_dapot['Kota/Kab'].apply(lambda x: str(x).title() if pd.notnull(x) else x)
         if 'Kecamatan' in df_dapot.columns:
             df_dapot['Kecamatan'] = df_dapot['Kecamatan'].apply(lambda x: str(x).title() if pd.notnull(x) else x)
+            
+        # Standarisasi nilai Hub Site dari awal
+        if 'Hub site' in df_dapot.columns:
+            df_dapot['Hub site'] = df_dapot['Hub site'].fillna('Non Hub')
 
         # Rule Down 
         cond_power = (df_ume['Alarm Code Name'].str.contains('Input power-off', case=False, na=False)) & \
@@ -123,6 +127,16 @@ if df_dapot is not None and ume_file:
             if hours > 0: res.append(f"{hours}j")
             res.append(f"{minutes}m")
             return " ".join(res)
+            
+        # Fungsi ringkas buat bikin tabel summary Up/Down
+        def get_summary_table(col_name):
+            if col_name not in df_dapot.columns: return pd.DataFrame()
+            summary = pd.crosstab(df_dapot[col_name], df_dapot['Status']).reset_index()
+            for s in ['Up', 'Down']:
+                if s not in summary.columns: summary[s] = 0
+            summary = summary.rename(columns={'Down': 'Jumlah Down', 'Up': 'Jumlah Up'})
+            # Urutkan berdasarkan Jumlah Down terbanyak
+            return summary.sort_values('Jumlah Down', ascending=False)[[col_name, 'Jumlah Down', 'Jumlah Up']]
 
         # ==========================================
         # SPLIT SCREEN DASHBOARD
@@ -145,40 +159,36 @@ if df_dapot is not None and ume_file:
             c1.success(f"✅ **Up:** {up_count}")
             c2.error(f"🚨 **Down:** {down_count}")
             
-            if down_count > 0:
+            # Tab sekarang selalu muncul untuk melihat keseluruhan area
+            tab1, tab2, tab3, tab4 = st.tabs(["Kabupaten", "Kecamatan", "Hub/Non Hubsite", "Sites"])
+            
+            with tab1:
+                kab_df = get_summary_table('Kota/Kab')
+                event_kab = st.dataframe(kab_df, height=300, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+                if len(event_kab.selection.rows) > 0:
+                    filter_col = 'Kota/Kab'
+                    filter_val = kab_df.iloc[event_kab.selection.rows[0]]['Kota/Kab']
+                    
+            with tab2:
+                kec_df = get_summary_table('Kecamatan')
+                event_kec = st.dataframe(kec_df, height=300, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+                if len(event_kec.selection.rows) > 0:
+                    filter_col = 'Kecamatan'
+                    filter_val = kec_df.iloc[event_kec.selection.rows[0]]['Kecamatan']
+                    
+            with tab3:
+                hub_df = get_summary_table('Hub site')
+                event_hub = st.dataframe(hub_df, height=300, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+                if len(event_hub.selection.rows) > 0:
+                    filter_col = 'Hub site'
+                    filter_val = hub_df.iloc[event_hub.selection.rows[0]]['Hub site']
+            
+            with tab4:
                 df_dapot_down = df_dapot[df_dapot['Status'] == 'Down'].copy()
-                df_dapot_down['Hub site'] = df_dapot_down['Hub site'].fillna('Non Hub')
                 
-                # UPDATE NAMA TAB DI SINI
-                tab1, tab2, tab3, tab4 = st.tabs(["Kabupaten", "Kecamatan", "Hub/Non Hubsite", "Sites"])
-                
-                with tab1:
-                    kab_df = df_dapot_down.groupby('Kota/Kab').size().reset_index(name='Jumlah Down').sort_values('Jumlah Down', ascending=False)
-                    event_kab = st.dataframe(kab_df, height=300, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
-                    if len(event_kab.selection.rows) > 0:
-                        filter_col = 'Kota/Kab'
-                        filter_val = kab_df.iloc[event_kab.selection.rows[0]]['Kota/Kab']
-                        
-                with tab2:
-                    kec_df = df_dapot_down.groupby('Kecamatan').size().reset_index(name='Jumlah Down').sort_values('Jumlah Down', ascending=False)
-                    event_kec = st.dataframe(kec_df, height=300, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
-                    if len(event_kec.selection.rows) > 0:
-                        filter_col = 'Kecamatan'
-                        filter_val = kec_df.iloc[event_kec.selection.rows[0]]['Kecamatan']
-                        
-                with tab3:
-                    hub_df = df_dapot_down.groupby('Hub site').size().reset_index(name='Jumlah Down').sort_values('Jumlah Down', ascending=False)
-                    event_hub = st.dataframe(hub_df, height=300, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
-                    if len(event_hub.selection.rows) > 0:
-                        filter_col = 'Hub site'
-                        filter_val = hub_df.iloc[event_hub.selection.rows[0]]['Hub site']
-                
-                with tab4:
+                if not df_dapot_down.empty:
                     df_dapot_down['Occurrence_Time'] = df_dapot_down['NE_CLEAN'].map(min_occurrence)
-                    
-                    # SORTING BERDASARKAN WAKTU ALARM (Terlama = ascending order) sebelum dikonversi jadi string
                     df_dapot_down = df_dapot_down.sort_values(by='Occurrence_Time', ascending=True, na_position='last')
-                    
                     df_dapot_down['Durasi Down'] = df_dapot_down['Occurrence_Time'].apply(format_durasi)
                     
                     kolom_detail = {
@@ -197,13 +207,13 @@ if df_dapot is not None and ume_file:
                     kolom_ada = [k for k in kolom_detail.keys() if k in df_dapot_down.columns]
                     df_detail_final = df_dapot_down[kolom_ada].rename(columns=kolom_detail)
                     st.dataframe(df_detail_final, height=300, use_container_width=True, hide_index=True)
+                else:
+                    st.info("🎉 Keren! Tidak ada site yang Down saat ini.")
 
         # --- KOLOM KANAN (MAPS) ---
         with col_map:
             df_map = df_dapot.copy()
             if filter_col and filter_val:
-                if filter_col == 'Hub site':
-                    df_map['Hub site'] = df_map['Hub site'].fillna('Non Hub')
                 df_map = df_map[df_map[filter_col] == filter_val]
                 st.info(f"📍 Menampilkan Area **{filter_col}: {filter_val}** (Up & Down)")
             else:
