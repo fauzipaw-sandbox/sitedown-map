@@ -398,17 +398,18 @@ if df_dapot is not None:
 
                             durasi_str = f" (Durasi: {format_durasi(start_dt)})" if (status == 'Down' and start_dt) else ""
                             
-                            route_html_button = f'<hr style="margin: 5px 0;"><a href="{route_link}" target="_blank" style="display:block; text-align:center; background:#1a73e8; color:white; padding:5px; text-decoration:none; border-radius:4px; font-weight:bold;">🔗 Buka Link Route</a>' if (pd.notnull(route_link) and str(route_link).strip() != "" and str(route_link).lower() != "nan") else ""
+                            route_html_button = f'<hr style="margin: 4px 0;"><a href="{route_link}" target="_blank" style="display:block; text-align:center; background:#1a73e8; color:white; padding:4px; text-decoration:none; border-radius:4px; font-weight:bold; font-size:10px;">🔗 Buka Link Route</a>' if (pd.notnull(route_link) and str(route_link).strip() != "" and str(route_link).lower() != "nan") else ""
 
+                            # Tooltip HTML responsif & dibalut (wrapped) agar rapi di HP
                             html_detail = f"""
-                            <div style="width: 270px; font-size:12px; color:black; line-height: 1.4;">
-                                <b style="font-size:14px;">{site_name}</b> <br>Site ID: <b>{site_id}</b><br>
+                            <div style="max-width: 240px; font-size:11px; color:black; line-height: 1.35; word-wrap: break-word; white-space: normal;">
+                                <b style="font-size:13px;">{site_name}</b> <br>Site ID: <b>{site_id}</b><br>
                                 Status: {status_label}{durasi_str}<br><b>Class:</b> {site_class} | <b>Tipe:</b> {hub_status}<br>
                                 <b>Power:</b> {power_type} | <b>Grid:</b> {grid_type}<br><b>Transport:</b> {transport_type}<br>
                                 <b>Simpul 4G:</b> {simpul_4g}<br><b>Jumlah Anakan:</b> {jumlah_anakan} site<br>
-                                <b>ID Anakan:</b> {site_id_anakan}
-                                <hr style="margin: 5px 0;"><b style="font-size:11px;">Daftar Alarm:</b><br>
-                                <div style="font-size:10px; max-height:100px; overflow-y:auto; background:#f1f1f1; padding:5px; border-radius:4px;">
+                                <b>Site ID Anakan:</b> <span style="word-break: break-word;">{site_id_anakan}</span>
+                                <hr style="margin: 4px 0;"><b style="font-size:10px;">Daftar Alarm:</b><br>
+                                <div style="font-size:9px; max-height:85px; overflow-y:auto; background:#f1f1f1; padding:4px; border-radius:4px;">
                                     {alarms_terkait}</div>{route_html_button}
                             </div>
                             """
