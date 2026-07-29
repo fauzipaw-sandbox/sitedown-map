@@ -21,10 +21,24 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 2. KONFIGURASI MASTER SPREADSHEET URL ---
-# Pastikan URL polosan cuma sampai ID spreadsheet (tanpa /edit atau gid=...)
 MASTER_SHEET_URL = "https://docs.google.com/spreadsheets/d/11pp1YavJsR6wnYcvs0Z6B94KM75clu7FQgRy7sdEQ4g"
 
-# --- 3. FUNGSI UTILITIES & KALKULASI ---
+# --- 3. MASTER KOLOM UME (UNTUK SITEDOWN & UME BROADCAST) ---
+# Kolom yang tidak ada di list ini akan otomatis dibuang biar Google Sheets gak berat
+KOLOM_MASTER = [
+    'ME ID', 
+    'Site Name(Office)', 
+    'Alarm Code Name', 
+    'Occurrence Time', 
+    'Position', 
+    'Specific Problem',
+    'Severity',
+    'NE Name',
+    'Clear Time',
+    'Location'
+]
+
+# --- 4. FUNGSI UTILITIES & KALKULASI ---
 def get_nearest_up_sites(lat, lon, df_up, k=2):
     if pd.isna(lat) or pd.isna(lon) or df_up.empty:
         return [], []
@@ -42,50 +56,49 @@ def get_nearest_up_sites(lat, lon, df_up, k=2):
     closest = df_up.loc[closest_idx]
     return closest['Site_ID'].tolist(), closest['NE_CLEAN'].tolist()
 
-# Buka koneksi ke GSheets pakai credential rahasia di Streamlit Secrets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- 4. SIDEBAR UNTUK UPLOAD & UPDATE DATA KE GSHEETS (OPSIONAL) ---
+# --- 5. SIDEBAR UPLOAD (OPSIONAL) ---
 with st.sidebar:
     st.header("⚙️ Update Data UME (Sidebar)")
-    st.markdown("Upload file UME terbaru di sini. **Semua kolom** akan disimpan utuh ke tab **All_Alarm**.")
+    st.markdown("Upload file UME terbaru di sini. Kolom akan otomatis disaring.")
     ume_file = st.file_uploader("Pilih file UME (Excel/CSV)", type=['xlsx', 'csv'], key="uploader_sidebar")
     
     if ume_file:
-        with st.spinner("⏳ Menyimpan seluruh data ke Google Sheets..."):
+        with st.spinner("⏳ Menyaring kolom & menyimpan ke Google Sheets..."):
             try:
                 if ume_file.name.endswith('.csv'):
                     df_new = pd.read_csv(ume_file)
                 else:
                     df_new = pd.read_excel(ume_file)
                     
+                kolom_ada = [col for col in KOLOM_MASTER if col in df_new.columns]
+                if kolom_ada:
+                    df_new = df_new[kolom_ada]
+                
+                df_new = df_new.dropna(how='all')
                 if 'Occurrence Time' in df_new.columns:
                     df_new['Occurrence Time'] = df_new['Occurrence Time'].astype(str)
                 
-                # Timpa data di Google Sheets ke worksheet=0 (All_Alarm)
                 conn.update(spreadsheet=MASTER_SHEET_URL, worksheet=0, data=df_new)
-                
-                # --- BERSIHKAN SEMUA CACHE & KONEKSI BIAR GA HANG ---
                 st.cache_data.clear()
                 conn.reset() 
-                
-                st.success("✅ Data berhasil disimpan! Memuat ulang summary...")
+                st.success("✅ Data berhasil disimpan!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Gagal update data: {e}")
 
-# --- 5. HEADER & EXPANDER UPDATE DI UTAMA (ALWAYS STANDBY) ---
+# --- 6. HEADER & EXPANDER UPDATE UTAMA (DI ATAS LAYAR) ---
 st.title("🗺️ Site Down Monitoring")
 st.markdown("Monitoring status Site (Up/Down) berdasarkan alarm UME.")
 
-# ---> ACCORDION UPLOADER PERMANEN DI ATAS LAYAR <---
 with st.expander("⚙️ **KLIK DI SINI UNTUK UPDATE / UPLOAD DATA UME TERBARU**", expanded=False):
-    st.markdown("Upload file UME terbaru di sini (Excel/CSV). Data lama di tab **All_Alarm** akan otomatis diperbarui.")
+    st.markdown("Upload file UME terbaru di sini. Data akan otomatis disaring agar database tetap ringan.")
     col_up1, col_up2 = st.columns([2, 1])
     with col_up1:
         ume_file_top = st.file_uploader("Pilih file UME (Excel/CSV)", type=['xlsx', 'csv'], key="uploader_top")
     with col_up2:
-        st.write("") # Spacer biar sejajar
+        st.write("") 
         st.write("")
         if st.button("🔄 Reload Data / Clear Cache", use_container_width=True, type="primary"):
             st.cache_data.clear()
@@ -93,22 +106,26 @@ with st.expander("⚙️ **KLIK DI SINI UNTUK UPDATE / UPLOAD DATA UME TERBARU**
             st.rerun()
             
     if ume_file_top:
-        with st.spinner("⏳ Menyimpan seluruh data ke Google Sheets..."):
+        with st.spinner("⏳ Menyaring kolom & menyimpan ke Google Sheets..."):
             try:
                 if ume_file_top.name.endswith('.csv'):
                     df_new_top = pd.read_csv(ume_file_top)
                 else:
                     df_new_top = pd.read_excel(ume_file_top)
                     
+                # 🔥 Otomatis potong kolom cuma ambil yang ada di KOLOM_MASTER
+                kolom_ada_top = [col for col in KOLOM_MASTER if col in df_new_top.columns]
+                if kolom_ada_top:
+                    df_new_top = df_new_top[kolom_ada_top]
+                    
+                df_new_top = df_new_top.dropna(how='all')
                 if 'Occurrence Time' in df_new_top.columns:
                     df_new_top['Occurrence Time'] = df_new_top['Occurrence Time'].astype(str)
                 
-                # Timpa data di Google Sheets ke worksheet=0 (All_Alarm)
                 conn.update(spreadsheet=MASTER_SHEET_URL, worksheet=0, data=df_new_top)
                 
                 st.cache_data.clear()
                 conn.reset() 
-                
                 st.success("✅ Data berhasil disimpan! Memuat ulang summary...")
                 st.rerun()
             except Exception as e:
@@ -116,10 +133,9 @@ with st.expander("⚙️ **KLIK DI SINI UNTUK UPDATE / UPLOAD DATA UME TERBARU**
 
 st.divider()
 
-# --- PROSES TARIK DATA DARI SHEETS ---
+# --- 7. TARIK DATA DARI SHEETS ---
 with st.spinner('⏳ Sedang menyinkronkan data dari Google Sheets...'):
     try:
-        # worksheet=1 artinya TAB KEDUA -> Data Site
         df_dapot = conn.read(
             spreadsheet=MASTER_SHEET_URL, 
             worksheet=1, 
@@ -131,7 +147,6 @@ with st.spinner('⏳ Sedang menyinkronkan data dari Google Sheets...'):
         df_dapot = None
         
     try:
-        # worksheet=0 artinya TAB PERTAMA (Paling Kiri) -> All_Alarm
         df_ume = conn.read(
             spreadsheet=MASTER_SHEET_URL, 
             worksheet=0, 
@@ -142,11 +157,11 @@ with st.spinner('⏳ Sedang menyinkronkan data dari Google Sheets...'):
         st.error(f"Gagal menarik tab All_Alarm: {e}")
         df_ume = pd.DataFrame()
 
-# --- 6. PROSES DATA DENGAN LOGIC DINAMIS ---
+# --- 8. PROSES DATA & RENDER DASHBOARD ---
 if df_dapot is not None:
     if df_ume.empty or len(df_ume) == 0:
         st.warning("⚠️ **Database UME masih kosong atau belum ter-load di Google Sheets!**")
-        st.info("💡 **Cara Update:** Klik menu **`⚙️ KLIK DI SINI UNTUK UPDATE / UPLOAD DATA UME TERBARU`** di bagian atas halaman ini untuk mengupload file Excel/CSV UME lo.")
+        st.info("💡 **Cara Update:** Klik menu **`⚙️ KLIK DI SINI UNTUK UPDATE / UPLOAD DATA UME TERBARU`** di atas untuk mengupload file UME.")
     else:
         try:
             if 'Occurrence Time' in df_ume.columns:
@@ -265,9 +280,6 @@ if df_dapot is not None:
                 summary['% Up'] = (summary['Jumlah Up'] / summary['Total'] * 100).round(1).astype(str) + '%'
                 return summary.sort_values('Jumlah Down', ascending=False).set_index(col_name)[['Jumlah Down', 'Jumlah Up', '% Down', '% Up', 'Total']]
 
-            # ==========================================
-            # LAYOUT: STATS (KIRI) & MAPS (KANAN)
-            # ==========================================
             col_stats, col_map = st.columns([1.5, 2.5]) 
             
             filter_col = None
@@ -413,9 +425,6 @@ if df_dapot is not None:
                     else:
                         st.warning("Tidak ada data site (Up/Down) di area yang dipilih.")
 
-            # ==========================================
-            # LAYOUT BAWAH: TABEL DETAIL SITE DOWN
-            # ==========================================
             st.divider()
             st.subheader("📋 Detail Site Down")
             
