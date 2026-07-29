@@ -7,7 +7,7 @@ import math
 from streamlit_gsheets import GSheetsConnection
 
 # --- 1. KONFIGURASI LAYOUT ---
-st.set_page_config(page_title="Site Down Monitoring", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Site Down Monitoring", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
     <style>
@@ -23,18 +23,15 @@ st.markdown("""
 # --- 2. KONFIGURASI MASTER SPREADSHEET URL ---
 MASTER_SHEET_URL = "https://docs.google.com/spreadsheets/d/11pp1YavJsR6wnYcvs0Z6B94KM75clu7FQgRy7sdEQ4g"
 
-# --- 3. MASTER KOLOM UME (UNTUK SITEDOWN & UME BROADCAST) ---
-# Kolom yang tidak ada di list ini akan otomatis dibuang biar Google Sheets gak berat
+# --- 3. MASTER KOLOM UME (DISAMAKAN DENGAN FORMAT BROADCAST UME) ---
 KOLOM_MASTER = [
+    'Alarm ID',
     'ME ID', 
     'Site Name(Office)', 
     'Alarm Code Name', 
     'Occurrence Time', 
     'Position', 
     'Specific Problem',
-    'Severity',
-    'NE Name',
-    'Clear Time',
     'Location'
 ]
 
@@ -58,48 +55,15 @@ def get_nearest_up_sites(lat, lon, df_up, k=2):
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- 5. SIDEBAR UPLOAD (OPSIONAL) ---
-with st.sidebar:
-    st.header("⚙️ Update Data UME (Sidebar)")
-    st.markdown("Upload file UME terbaru di sini. Kolom akan otomatis disaring.")
-    ume_file = st.file_uploader("Pilih file UME (Excel/CSV)", type=['xlsx', 'csv'], key="uploader_sidebar")
-    
-    if ume_file:
-        # Cek biar nggak looping kalau filenya sama
-        if "last_uploaded_sidebar" not in st.session_state or st.session_state["last_uploaded_sidebar"] != ume_file.name:
-            with st.spinner("⏳ Menyaring kolom & menyimpan ke Google Sheets..."):
-                try:
-                    if ume_file.name.endswith('.csv'):
-                        df_new = pd.read_csv(ume_file)
-                    else:
-                        df_new = pd.read_excel(ume_file)
-                        
-                    kolom_ada = [col for col in KOLOM_MASTER if col in df_new.columns]
-                    if kolom_ada:
-                        df_new = df_new[kolom_ada]
-                    
-                    df_new = df_new.dropna(how='all')
-                    if 'Occurrence Time' in df_new.columns:
-                        df_new['Occurrence Time'] = df_new['Occurrence Time'].astype(str)
-                    
-                    conn.update(spreadsheet=MASTER_SHEET_URL, worksheet=0, data=df_new)
-                    st.cache_data.clear()
-                    conn.reset() 
-                    
-                    st.session_state["last_uploaded_sidebar"] = ume_file.name
-                    st.success("✅ Data berhasil disimpan! Silakan klik tombol Reload di bawah untuk me-refresh dashboard.")
-                except Exception as e:
-                    st.error(f"Gagal update data: {e}")
-
-# --- 6. HEADER & EXPANDER UPDATE UTAMA (DI ATAS LAYAR) ---
+# --- 5. HEADER & EXPANDER UPDATE UTAMA (DI ATAS LAYAR) ---
 st.title("🗺️ Site Down Monitoring")
-st.markdown("Monitoring status Site (Up/Down) berdasarkan alarm UME.")
+st.markdown("Monitoring status Site (Up/Down) berdasarkan data alarm.")
 
-with st.expander("⚙️ **KLIK DI SINI UNTUK UPDATE / UPLOAD DATA UME TERBARU**", expanded=False):
-    st.markdown("Upload file UME terbaru di sini. Data akan otomatis disaring agar database tetap ringan.")
+with st.expander("⚙️ **KLIK DI SINI UNTUK UPDATE / UPLOAD DATA ALARM TERBARU**", expanded=False):
+    st.markdown("Unggah file data alarm terbaru di sini. Format kolom akan disesuaikan otomatis dengan standar database.")
     col_up1, col_up2 = st.columns([2, 1])
     with col_up1:
-        ume_file_top = st.file_uploader("Pilih file UME (Excel/CSV)", type=['xlsx', 'csv'], key="uploader_top")
+        ume_file_top = st.file_uploader("Pilih file alarm (Excel/CSV)", type=['xlsx', 'csv'], key="uploader_top")
     with col_up2:
         st.write("") 
         st.write("")
@@ -109,9 +73,8 @@ with st.expander("⚙️ **KLIK DI SINI UNTUK UPDATE / UPLOAD DATA UME TERBARU**
             st.rerun()
             
     if ume_file_top:
-        # KUNCI UTAMA: Cek session state biar tidak nge-loop file yang sama terus-terusan
         if "last_uploaded_top" not in st.session_state or st.session_state["last_uploaded_top"] != ume_file_top.name:
-            with st.spinner("⏳ Menyaring kolom & menyimpan data ke Google Sheets..."):
+            with st.spinner("⏳ Menyelaraskan kolom dan menyimpan data..."):
                 try:
                     if ume_file_top.name.endswith('.csv'):
                         df_new_top = pd.read_csv(ume_file_top)
@@ -131,16 +94,15 @@ with st.expander("⚙️ **KLIK DI SINI UNTUK UPDATE / UPLOAD DATA UME TERBARU**
                     st.cache_data.clear()
                     conn.reset() 
                     
-                    # Simpan nama file ke session state supaya script tau file ini sudah diproses
                     st.session_state["last_uploaded_top"] = ume_file_top.name
-                    st.success("✅ Data berhasil disimpan! Klik tombol **Reload Data / Clear Cache** di atas untuk melihat hasilnya.")
+                    st.success("✅ Data berhasil disimpan. Klik tombol Reload Data di atas untuk memperbarui tampilan.")
                 except Exception as e:
-                    st.error(f"Gagal update data: {e}")
+                    st.error(f"Gagal memperbarui data: {e}")
 
 st.divider()
 
-# --- 7. TARIK DATA DARI SHEETS ---
-with st.spinner('⏳ Sedang menyinkronkan data dari Google Sheets...'):
+# --- 6. TARIK DATA DARI DATABASE ---
+with st.spinner('⏳ Sedang menyinkronkan data...'):
     try:
         df_dapot = conn.read(
             spreadsheet=MASTER_SHEET_URL, 
@@ -149,7 +111,7 @@ with st.spinner('⏳ Sedang menyinkronkan data dari Google Sheets...'):
             ttl=300
         )
     except Exception as e:
-        st.error(f"Gagal menarik tab Data Site: {e}")
+        st.error(f"Gagal menarik data site: {e}")
         df_dapot = None
         
     try:
@@ -160,14 +122,14 @@ with st.spinner('⏳ Sedang menyinkronkan data dari Google Sheets...'):
             ttl=300
         )
     except Exception as e:
-        st.error(f"Gagal menarik tab All_Alarm: {e}")
+        st.error(f"Gagal menarik data alarm: {e}")
         df_ume = pd.DataFrame()
 
-# --- 8. PROSES DATA & RENDER DASHBOARD ---
+# --- 7. PROSES DATA & RENDER DASHBOARD ---
 if df_dapot is not None:
     if df_ume.empty or len(df_ume) == 0:
-        st.warning("⚠️ **Database UME masih kosong atau belum ter-load di Google Sheets!**")
-        st.info("💡 **Cara Update:** Klik menu **`⚙️ KLIK DI SINI UNTUK UPDATE / UPLOAD DATA UME TERBARU`** di atas untuk mengupload file UME.")
+        st.warning("⚠️ **Database alarm masih kosong atau belum dimuat!**")
+        st.info("💡 **Petunjuk:** Klik menu **`⚙️ KLIK DI SINI UNTUK UPDATE / UPLOAD DATA ALARM TERBARU`** di atas untuk mengunggah file data.")
     else:
         try:
             if 'Occurrence Time' in df_ume.columns:
@@ -176,7 +138,7 @@ if df_dapot is not None:
             else:
                 last_update_str = "Tidak diketahui"
                 
-            st.info(f"🕒 **Data Update Terakhir (Berdasarkan Alarm):** {last_update_str}")
+            st.info(f"🕒 **Pembaruan Data Terakhir (Berdasarkan Alarm):** {last_update_str}")
             
             def clean_id(text):
                 val = str(text).strip()
@@ -198,7 +160,7 @@ if df_dapot is not None:
             elif 'Site Name(Office)' in df_ume.columns:
                 df_ume['ME_CLEAN'] = df_ume['Site Name(Office)'].apply(get_6digit_id)
             else:
-                st.error("Kolom 'ME ID' atau 'Site Name(Office)' tidak ditemukan di database UME!")
+                st.error("Kolom 'ME ID' atau 'Site Name(Office)' tidak ditemukan pada data alarm.")
                 st.stop()
                 
             if 'NE ID' in df_dapot.columns:
@@ -206,7 +168,7 @@ if df_dapot is not None:
             elif 'Site_ID' in df_dapot.columns:
                 df_dapot['NE_CLEAN'] = df_dapot['Site_ID'].apply(get_6digit_id)
             else:
-                st.error("Kolom ID valid tidak ditemukan di Dapot!")
+                st.error("Kolom ID valid tidak ditemukan pada data site.")
                 st.stop()
 
             if 'LAT' in df_dapot.columns and 'LONG' in df_dapot.columns:
@@ -218,6 +180,10 @@ if df_dapot is not None:
                     df_dapot[col] = df_dapot[col].apply(lambda x: str(x).title() if pd.notnull(x) else x)
             if 'Hub site' in df_dapot.columns:
                 df_dapot['Hub site'] = df_dapot['Hub site'].fillna('Non Hub')
+
+            child_counts = {}
+            if 'Parent_Site' in df_dapot.columns:
+                child_counts = df_dapot['Parent_Site'].value_counts().to_dict()
 
             if 'Occurrence Time' in df_ume.columns and 'Alarm Code Name' in df_ume.columns:
                 df_ume['Alarm_Detail'] = "• " + df_ume['Alarm Code Name'].astype(str) + " (" + df_ume['Occurrence Time'].astype(str) + ")"
@@ -293,9 +259,9 @@ if df_dapot is not None:
             
             with col_stats:
                 col_stat_text, col_stat_toggle1, col_stat_toggle2 = st.columns([2, 1, 1])
-                col_stat_text.subheader("📊 Summary")
-                show_labels = col_stat_toggle1.toggle("Show Site ID", value=False)
-                show_legend = col_stat_toggle2.toggle("Show Legend", value=True)
+                col_stat_text.subheader("📊 Ringkasan")
+                show_labels = col_stat_toggle1.toggle("Tampilkan ID", value=False)
+                show_legend = col_stat_toggle2.toggle("Tampilkan Legenda", value=True)
                 
                 up_count = len(df_dapot[df_dapot['Status'] == 'Up'])
                 down_count = len(df_dapot[df_dapot['Status'] == 'Down'])
@@ -355,10 +321,10 @@ if df_dapot is not None:
                                         bottom: 20px; left: 20px; width: 190px; height: 120px; 
                                         border:2px solid grey; z-index:9999; font-size:12px; color:black;
                                         background-color:white; padding: 10px; border-radius: 5px; opacity: 0.95;">
-                            <b style="color:black;">Map Legend</b><br>
+                            <b style="color:black;">Legenda Peta</b><br>
                             <i style="background:#e60000; width: 12px; height: 12px; float: left; margin-right: 8px; margin-top: 3px; border-radius: 50%;"></i> <span style="color:black;">Down</span><br>
                             <i style="background:#00802b; width: 12px; height: 12px; float: left; margin-right: 8px; margin-top: 3px; border-radius: 50%;"></i> <span style="color:black;">Up</span><br>
-                            <i style="background:#0066ff; width: 12px; height: 12px; float: left; margin-right: 8px; margin-top: 3px; border-radius: 50%;"></i> <span style="color:black;">Neighbour to optim</span><br>
+                            <i style="background:#0066ff; width: 12px; height: 12px; float: left; margin-right: 8px; margin-top: 3px; border-radius: 50%;"></i> <span style="color:black;">Rekomendasi Optimasi</span><br>
                             <div style="color:#444; font-size:16px; float:left; margin-right:7px; margin-top:-3px; margin-left:-2px;">★</div> <span style="color:black;">Hub site</span><br>
                             </div>
                             '''
@@ -378,13 +344,17 @@ if df_dapot is not None:
                             hub_status = 'Non Hub' if not hub_val or hub_val.lower() == 'nan' else hub_val
                             is_hub = 'hub' in hub_status.lower() and 'non' not in hub_status.lower()
                             
+                            parent_site = row.get('Parent_Site', row.get('Hub site', '-'))
+                            child_count = child_counts.get(site_id, row.get('Child_Count', 0))
+                            route_link = row.get('Route', row.get('Link_Route', ''))
+                            
                             if status == 'Down':
                                 color_hex = '#e60000'
                                 status_label = '<b style="color:red;">Down</b>'
                             else:
                                 if ne_id in suggested_up_ids:
                                     color_hex = '#0066ff'
-                                    status_label = '<b style="color:#0066ff;">Up (Suggested to Optim)</b>'
+                                    status_label = '<b style="color:#0066ff;">Up (Rekomendasi Optimasi)</b>'
                                 else:
                                     color_hex = '#00802b'
                                     status_label = '<b style="color:green;">Up</b>'
@@ -393,18 +363,28 @@ if df_dapot is not None:
                             start_dt = min_occurrence.get(ne_id) if status == 'Down' else None
                             durasi_str = f" (Durasi: {format_durasi(start_dt)})" if status == 'Down' else ""
                             
+                            route_html_button = ""
+                            if pd.notnull(route_link) and str(route_link).strip() != "" and str(route_link).lower() != "nan":
+                                route_html_button = f'''
+                                <hr style="margin: 5px 0;">
+                                <a href="{route_link}" target="_blank" style="display:block; text-align:center; background:#1a73e8; color:white; padding:5px; text-decoration:none; border-radius:4px; font-weight:bold;">🔗 Buka Link Route</a>
+                                '''
+
                             html_detail = f"""
-                            <div style="width: 250px; font-size:12px; color:black; white-space: normal; line-height: 1.4;">
+                            <div style="width: 260px; font-size:12px; color:black; white-space: normal; line-height: 1.4;">
                                 <b style="font-size:14px;">{site_name}</b> <br>
                                 Site ID: <b>{site_id}</b><br>
                                 Status: {status_label}{durasi_str}<br>
                                 <b>Class:</b> {site_class} | <b>Tipe:</b> {hub_status}<br>
-                                <b>Power:</b> {power_type} | <b>Grid:</b> {grid_type}
+                                <b>Power:</b> {power_type} | <b>Grid:</b> {grid_type}<br>
+                                <b>Site Simpul (Induk):</b> {parent_site}<br>
+                                <b>Jumlah Anakan:</b> {child_count} site
                                 <hr style="margin: 5px 0;">
                                 <b style="font-size:11px;">Daftar Alarm Terdeteksi:</b><br>
-                                <div style="font-size:10px; max-height:120px; overflow-y:auto; background-color:#f1f1f1; padding:5px; border-radius:4px;">
+                                <div style="font-size:10px; max-height:100px; overflow-y:auto; background-color:#f1f1f1; padding:5px; border-radius:4px;">
                                     {alarms_terkait}
                                 </div>
+                                {route_html_button}
                             </div>
                             """
                             
@@ -429,7 +409,7 @@ if df_dapot is not None:
                         folium.LayerControl(position='topright').add_to(m)
                         st_folium(m, use_container_width=True, height=520, returned_objects=[])
                     else:
-                        st.warning("Tidak ada data site (Up/Down) di area yang dipilih.")
+                        st.warning("Tidak ada data site pada area yang dipilih.")
 
             st.divider()
             st.subheader("📋 Detail Site Down")
@@ -458,7 +438,7 @@ if df_dapot is not None:
                     'Hub site': 'Hub/Non Hub',
                     'Simpul 4G': 'Simpul 4G',
                     'Durasi Down': 'Durasi Down',
-                    'Suggestion (Nearest Up)': 'Suggestion'
+                    'Suggestion (Nearest Up)': 'Rekomendasi Site Up'
                 }
                 
                 kolom_ada = [k for k in kolom_detail.keys() if k in df_dapot_down.columns]
@@ -469,8 +449,8 @@ if df_dapot is not None:
                     
                 st.dataframe(df_detail_final, height=350, use_container_width=True)
             else:
-                st.info("🎉 Keren! Tidak ada site yang Down saat ini.")
+                st.info("🎉 Sistem normal. Tidak ada site yang berstatus Down saat ini.")
                     
         except Exception as e:
-            st.error(f"🚨 Terjadi kesalahan saat memproses kalkulasi summary: {e}")
+            st.error(f"🚨 Terjadi kesalahan saat memproses kalkulasi ringkasan: {e}")
             st.exception(e)
