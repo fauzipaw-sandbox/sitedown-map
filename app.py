@@ -400,16 +400,16 @@ if df_dapot is not None:
                             
                             route_html_button = f'<hr style="margin: 4px 0;"><a href="{route_link}" target="_blank" style="display:block; text-align:center; background:#1a73e8; color:white; padding:4px; text-decoration:none; border-radius:4px; font-weight:bold; font-size:10px;">🔗 Buka Link Route</a>' if (pd.notnull(route_link) and str(route_link).strip() != "" and str(route_link).lower() != "nan") else ""
 
-                            # Tooltip HTML responsif & dibalut (wrapped) agar rapi di HP
+                            # Tooltip HTML dibalikin rapi normal, efek wrap murni cuma nempel ke bagian site_id_anakan
                             html_detail = f"""
-                            <div style="max-width: 240px; font-size:11px; color:black; line-height: 1.35; word-wrap: break-word; white-space: normal;">
+                            <div style="width: 260px; font-size:11px; color:black; white-space: normal; line-height: 1.4;">
                                 <b style="font-size:13px;">{site_name}</b> <br>Site ID: <b>{site_id}</b><br>
                                 Status: {status_label}{durasi_str}<br><b>Class:</b> {site_class} | <b>Tipe:</b> {hub_status}<br>
                                 <b>Power:</b> {power_type} | <b>Grid:</b> {grid_type}<br><b>Transport:</b> {transport_type}<br>
                                 <b>Simpul 4G:</b> {simpul_4g}<br><b>Jumlah Anakan:</b> {jumlah_anakan} site<br>
-                                <b>Site ID Anakan:</b> <span style="word-break: break-word;">{site_id_anakan}</span>
+                                <b>Site ID Anakan:</b> <span style="word-break: break-all;">{site_id_anakan}</span>
                                 <hr style="margin: 4px 0;"><b style="font-size:10px;">Daftar Alarm:</b><br>
-                                <div style="font-size:9px; max-height:85px; overflow-y:auto; background:#f1f1f1; padding:4px; border-radius:4px;">
+                                <div style="font-size:10px; max-height:85px; overflow-y:auto; background:#f1f1f1; padding:4px; border-radius:4px;">
                                     {alarms_terkait}</div>{route_html_button}
                             </div>
                             """
