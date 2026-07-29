@@ -139,14 +139,18 @@ if df_dapot is not None:
                 
             st.info(f"🕒 **Pembaruan Data Terakhir (Berdasarkan Alarm):** {last_update_str}")
             
-            # --- FUNGSI CLEANING ID ---
+            # --- FUNGSI CLEANING ID (Proteksi Kekosongan Data) ---
             def clean_id(text):
+                if pd.isna(text): return ""
                 val = str(text).strip()
+                if val.lower() in ['nan', 'none', 'null', '']: return ""
                 return val[:-2] if val.endswith('.0') else val
 
             def get_6digit_id(text):
+                if pd.isna(text): return ""
                 try:
                     val = str(text).strip()
+                    if val.lower() in ['nan', 'none', 'null', '']: return ""
                     if val.endswith('.0'): val = val[:-2]
                     if val.upper().startswith('C_') or val.upper().startswith('N_'):
                         return val[2:8].upper()
@@ -229,7 +233,6 @@ if df_dapot is not None:
                         elif pd.notnull(t1): min_occurrence[k] = t1
                         elif pd.notnull(t2): min_occurrence[k] = t2
 
-            # 🔥 BUG FIX: Buang ID kosong atau Null agar tidak membuat semua site berstatus Down
             down_ids = {str(k).strip() for k in down_ids_raw if pd.notnull(k) and str(k).strip() != '' and str(k).strip().lower() not in ['nan', 'none']}
 
             # --- PENGKONDISIAN DATA MASTER SITE ---
@@ -243,13 +246,20 @@ if df_dapot is not None:
             if 'Hub site' in df_dapot.columns:
                 df_dapot['Hub site'] = df_dapot['Hub site'].fillna('Non Hub')
 
-            df_dapot['C1'] = df_dapot['NE ID'].apply(clean_id) if 'NE ID' in df_dapot.columns else ""
-            df_dapot['C2'] = df_dapot['Site_ID'].astype(str).apply(get_6digit_id) if 'Site_ID' in df_dapot.columns else ""
-            df_dapot['C3'] = df_dapot['Site_Name'].astype(str).apply(get_6digit_id) if 'Site_Name' in df_dapot.columns else ""
-            df_dapot['NE_CLEAN'] = df_dapot['C1'].replace("", pd.NA).fillna(df_dapot['C2'].replace("", pd.NA)).fillna(df_dapot['C3']).fillna("")
+            # Ekstraksi ID secara aman dengan prioritas Site_ID -> Site_Name -> NE ID
+            df_dapot['C1'] = df_dapot['NE ID'].apply(clean_id) if 'NE ID' in df_dapot.columns else pd.Series([""] * len(df_dapot))
+            df_dapot['C2'] = df_dapot['Site_ID'].astype(str).apply(get_6digit_id) if 'Site_ID' in df_dapot.columns else pd.Series([""] * len(df_dapot))
+            df_dapot['C3'] = df_dapot['Site_Name'].astype(str).apply(get_6digit_id) if 'Site_Name' in df_dapot.columns else pd.Series([""] * len(df_dapot))
             
-            # Penetapan Status berdasarkan ID yang 100% valid
-            cond_status = df_dapot['C1'].isin(down_ids) | df_dapot['C2'].isin(down_ids) | df_dapot['C3'].isin(down_ids)
+            def get_valid_ne(row):
+                if row.get('C2'): return row['C2']
+                if row.get('C3'): return row['C3']
+                if row.get('C1'): return row['C1']
+                return ""
+                
+            df_dapot['NE_CLEAN'] = df_dapot.apply(get_valid_ne, axis=1)
+            
+            cond_status = df_dapot['C2'].isin(down_ids) | df_dapot['C3'].isin(down_ids) | df_dapot['C1'].isin(down_ids)
             df_dapot['Status'] = 'Up'
             df_dapot.loc[cond_status, 'Status'] = 'Down'
 
@@ -287,28 +297,12 @@ if df_dapot is not None:
                 show_labels = col_stat_toggle1.toggle("Tampilkan ID", value=False)
                 show_legend = col_stat_toggle2.toggle("Tampilkan Legenda", value=True)
                 
-                # --- SISTEM FILTER BERTINGKAT (CASCADING FILTER) ---
                 list_nop = sorted([str(x) for x in df_dapot['NOP'].dropna().unique() if str(x).strip() != ''])
-                # Cari index NOP Palangkaraya untuk dijadikan Default
-                idx_palangkaraya = next((i for i, v in enumerate(list_nop) if 'palangka' in str(v).lower()), -1)
+                idx_palangkaraya = next((i for i, v in enumerate(list_nop) if 'palangka' in str(v).lower()), 0)
                 
-                selected_nop = st.selectbox("📌 Pilih NOP", ["Semua Area"] + list_nop, index=idx_palangkaraya + 1)
+                selected_nop = st.selectbox("📌 Pilih NOP (Filter Utama)", list_nop, index=idx_palangkaraya)
                 
-                df_active = df_dapot.copy()
-                if selected_nop != "Semua Area":
-                    df_active = df_active[df_active['NOP'] == selected_nop]
-                    
-                list_kab = sorted([str(x) for x in df_active['Kota/Kab'].dropna().unique() if str(x).strip() != ''])
-                selected_kab = st.selectbox("📌 Pilih Kabupaten", ["Semua Kabupaten"] + list_kab)
-                
-                if selected_kab != "Semua Kabupaten":
-                    df_active = df_active[df_active['Kota/Kab'] == selected_kab]
-                    
-                list_kec = sorted([str(x) for x in df_active['Kecamatan'].dropna().unique() if str(x).strip() != ''])
-                selected_kec = st.selectbox("📌 Pilih Kecamatan", ["Semua Kecamatan"] + list_kec)
-                
-                if selected_kec != "Semua Kecamatan":
-                    df_active = df_active[df_active['Kecamatan'] == selected_kec]
+                df_active = df_dapot[df_dapot['NOP'] == selected_nop].copy()
 
                 st.divider()
                 
@@ -319,40 +313,57 @@ if df_dapot is not None:
                 c1.success(f"✅ **Total Up:** {up_count}")
                 c2.error(f"🚨 **Total Down:** {down_count}")
                 
-                tab1, tab2, tab3, tab4 = st.tabs(["NOP", "Kabupaten", "Kecamatan", "Hub/Non Hubsite"])
+                tab1, tab2, tab3 = st.tabs(["Kabupaten", "Kecamatan", "Hub/Non Hubsite"])
                 
-                nop_df = get_summary_table(df_active, 'NOP')
                 kab_df = get_summary_table(df_active, 'Kota/Kab')
                 kec_df = get_summary_table(df_active, 'Kecamatan')
                 hub_df = get_summary_table(df_active, 'Hub site')
                 
                 with tab1:
-                    st.dataframe(nop_df, height=250, use_container_width=True)
+                    event_kab = st.dataframe(kab_df, height=300, use_container_width=True, on_select="rerun", selection_mode="single-row")
                 with tab2:
-                    st.dataframe(kab_df, height=250, use_container_width=True)
+                    event_kec = st.dataframe(kec_df, height=300, use_container_width=True, on_select="rerun", selection_mode="single-row")
                 with tab3:
-                    st.dataframe(kec_df, height=250, use_container_width=True)
-                with tab4:
-                    st.dataframe(hub_df, height=250, use_container_width=True)
+                    event_hub = st.dataframe(hub_df, height=300, use_container_width=True, on_select="rerun", selection_mode="single-row")
                     
+            filter_col = None
+            filter_val = None
+            
+            if len(event_kab.selection.rows) > 0:
+                filter_col = 'Kota/Kab'
+                filter_val = kab_df.index[event_kab.selection.rows[0]]
+            elif len(event_kec.selection.rows) > 0:
+                filter_col = 'Kecamatan'
+                filter_val = kec_df.index[event_kec.selection.rows[0]]
+            elif len(event_hub.selection.rows) > 0:
+                filter_col = 'Hub site'
+                filter_val = hub_df.index[event_hub.selection.rows[0]]
+
             with col_map:
-                st.info(f"📍 Menampilkan Peta Area Berdasarkan Filter yang Dipilih")
+                df_map = df_active.copy()
+                if filter_col and filter_val:
+                    df_map = df_map[df_map[filter_col] == filter_val]
+                    st.info(f"📍 Menampilkan Area **NOP {selected_nop}** - Filter: **{filter_col} ({filter_val})**")
+                else:
+                    st.info(f"📍 Menampilkan Seluruh Area **NOP {selected_nop}**")
                 
-                # --- HITUNG JARAK TETANGGA HANYA PADA DATA YANG AKTIF DIFILTER ---
                 suggestion_site_ids = {}
                 suggested_up_ids = set()
                 df_up_all = df_dapot[(df_dapot['Status'] == 'Up') & df_dapot['LAT'].notna() & df_dapot['LONG'].notna()]
                 
-                for idx, row in df_active[df_active['Status'] == 'Down'].iterrows():
+                for idx, row in df_map[df_map['Status'] == 'Down'].iterrows():
                     site_ids, ne_cleans = get_nearest_up_sites(row['LAT'], row['LONG'], df_up_all, k=2)
                     suggestion_site_ids[row['NE_CLEAN']] = site_ids if site_ids else ["-"]
-                    suggested_up_ids.update(ne_cleans)
+                    for ne in ne_cleans:
+                        val = str(ne).strip()
+                        if val and val.lower() not in ['nan', 'none', 'unknown', '']:
+                            suggested_up_ids.add(val)
 
-                if 'LAT' in df_active.columns and 'LONG' in df_active.columns:
-                    df_map = df_active.dropna(subset=['LAT', 'LONG'])
+                if 'LAT' in df_map.columns and 'LONG' in df_map.columns:
+                    df_map = df_map.dropna(subset=['LAT', 'LONG'])
                     
                     if not df_map.empty:
-                        m = folium.Map(location=[df_map['LAT'].mean(), df_map['LONG'].mean()], zoom_start=9)
+                        m = folium.Map(location=[df_map['LAT'].mean(), df_map['LONG'].mean()], zoom_start=10 if (filter_col and filter_val) else 9)
                         
                         folium.TileLayer(
                             tiles='https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
@@ -380,7 +391,7 @@ if df_dapot is not None:
                         for idx, row in df_map.iterrows():
                             lat, lon = row['LAT'], row['LONG']
                             site_id = row.get('Site_ID', 'Unknown')
-                            ne_id = str(row.get('NE_CLEAN', 'Unknown'))
+                            ne_id = str(row.get('NE_CLEAN', 'Unknown')).strip()
                             site_name = row.get('Site_Name', 'Unknown')
                             site_class = row.get('SITE CLASS', row.get('Site_Class', '-'))
                             status = row['Status']
@@ -412,7 +423,7 @@ if df_dapot is not None:
                                 color_hex = '#e60000'
                                 status_label = '<b style="color:red;">Down</b>'
                             else:
-                                if ne_id in suggested_up_ids:
+                                if ne_id in suggested_up_ids and ne_id.lower() not in ['', 'nan', 'none', 'unknown']:
                                     color_hex = '#0066ff'
                                     status_label = '<b style="color:#0066ff;">Up (Rekomendasi Optimasi)</b>'
                                 else:
@@ -420,13 +431,13 @@ if df_dapot is not None:
                                     status_label = '<b style="color:green;">Up</b>'
 
                             alarms_terkait = "<i style='color:gray;'>Tidak ada alarm aktif</i>"
-                            for key_candidate in [row['C1'], row['C2'], row['C3']]:
+                            for key_candidate in [row['C2'], row['C3'], row['C1']]:
                                 if key_candidate and key_candidate in all_alarm_dict:
                                     alarms_terkait = all_alarm_dict[key_candidate]
                                     break
 
                             start_dt = None
-                            for key_candidate in [row['C1'], row['C2'], row['C3']]:
+                            for key_candidate in [row['C2'], row['C3'], row['C1']]:
                                 if key_candidate and key_candidate in min_occurrence:
                                     start_dt = min_occurrence[key_candidate]
                                     break
@@ -488,9 +499,12 @@ if df_dapot is not None:
             
             df_dapot_down = df_active[df_active['Status'] == 'Down'].copy()
             
+            if filter_col and filter_val:
+                df_dapot_down = df_dapot_down[df_dapot_down[filter_col] == filter_val]
+            
             if not df_dapot_down.empty:
                 def get_down_time(row):
-                    for c in [row['C1'], row['C2'], row['C3']]:
+                    for c in [row['C2'], row['C3'], row['C1']]:
                         if c in min_occurrence: return min_occurrence[c]
                     return pd.NaT
 
