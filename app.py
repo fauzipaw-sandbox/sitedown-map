@@ -65,28 +65,31 @@ with st.sidebar:
     ume_file = st.file_uploader("Pilih file UME (Excel/CSV)", type=['xlsx', 'csv'], key="uploader_sidebar")
     
     if ume_file:
-        with st.spinner("⏳ Menyaring kolom & menyimpan ke Google Sheets..."):
-            try:
-                if ume_file.name.endswith('.csv'):
-                    df_new = pd.read_csv(ume_file)
-                else:
-                    df_new = pd.read_excel(ume_file)
+        # Cek biar nggak looping kalau filenya sama
+        if "last_uploaded_sidebar" not in st.session_state or st.session_state["last_uploaded_sidebar"] != ume_file.name:
+            with st.spinner("⏳ Menyaring kolom & menyimpan ke Google Sheets..."):
+                try:
+                    if ume_file.name.endswith('.csv'):
+                        df_new = pd.read_csv(ume_file)
+                    else:
+                        df_new = pd.read_excel(ume_file)
+                        
+                    kolom_ada = [col for col in KOLOM_MASTER if col in df_new.columns]
+                    if kolom_ada:
+                        df_new = df_new[kolom_ada]
                     
-                kolom_ada = [col for col in KOLOM_MASTER if col in df_new.columns]
-                if kolom_ada:
-                    df_new = df_new[kolom_ada]
-                
-                df_new = df_new.dropna(how='all')
-                if 'Occurrence Time' in df_new.columns:
-                    df_new['Occurrence Time'] = df_new['Occurrence Time'].astype(str)
-                
-                conn.update(spreadsheet=MASTER_SHEET_URL, worksheet=0, data=df_new)
-                st.cache_data.clear()
-                conn.reset() 
-                st.success("✅ Data berhasil disimpan!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Gagal update data: {e}")
+                    df_new = df_new.dropna(how='all')
+                    if 'Occurrence Time' in df_new.columns:
+                        df_new['Occurrence Time'] = df_new['Occurrence Time'].astype(str)
+                    
+                    conn.update(spreadsheet=MASTER_SHEET_URL, worksheet=0, data=df_new)
+                    st.cache_data.clear()
+                    conn.reset() 
+                    
+                    st.session_state["last_uploaded_sidebar"] = ume_file.name
+                    st.success("✅ Data berhasil disimpan! Silakan klik tombol Reload di bawah untuk me-refresh dashboard.")
+                except Exception as e:
+                    st.error(f"Gagal update data: {e}")
 
 # --- 6. HEADER & EXPANDER UPDATE UTAMA (DI ATAS LAYAR) ---
 st.title("🗺️ Site Down Monitoring")
@@ -106,30 +109,33 @@ with st.expander("⚙️ **KLIK DI SINI UNTUK UPDATE / UPLOAD DATA UME TERBARU**
             st.rerun()
             
     if ume_file_top:
-        with st.spinner("⏳ Menyaring kolom & menyimpan ke Google Sheets..."):
-            try:
-                if ume_file_top.name.endswith('.csv'):
-                    df_new_top = pd.read_csv(ume_file_top)
-                else:
-                    df_new_top = pd.read_excel(ume_file_top)
+        # KUNCI UTAMA: Cek session state biar tidak nge-loop file yang sama terus-terusan
+        if "last_uploaded_top" not in st.session_state or st.session_state["last_uploaded_top"] != ume_file_top.name:
+            with st.spinner("⏳ Menyaring kolom & menyimpan data ke Google Sheets..."):
+                try:
+                    if ume_file_top.name.endswith('.csv'):
+                        df_new_top = pd.read_csv(ume_file_top)
+                    else:
+                        df_new_top = pd.read_excel(ume_file_top)
+                        
+                    kolom_ada_top = [col for col in KOLOM_MASTER if col in df_new_top.columns]
+                    if kolom_ada_top:
+                        df_new_top = df_new_top[kolom_ada_top]
+                        
+                    df_new_top = df_new_top.dropna(how='all')
+                    if 'Occurrence Time' in df_new_top.columns:
+                        df_new_top['Occurrence Time'] = df_new_top['Occurrence Time'].astype(str)
                     
-                # 🔥 Otomatis potong kolom cuma ambil yang ada di KOLOM_MASTER
-                kolom_ada_top = [col for col in KOLOM_MASTER if col in df_new_top.columns]
-                if kolom_ada_top:
-                    df_new_top = df_new_top[kolom_ada_top]
+                    conn.update(spreadsheet=MASTER_SHEET_URL, worksheet=0, data=df_new_top)
                     
-                df_new_top = df_new_top.dropna(how='all')
-                if 'Occurrence Time' in df_new_top.columns:
-                    df_new_top['Occurrence Time'] = df_new_top['Occurrence Time'].astype(str)
-                
-                conn.update(spreadsheet=MASTER_SHEET_URL, worksheet=0, data=df_new_top)
-                
-                st.cache_data.clear()
-                conn.reset() 
-                st.success("✅ Data berhasil disimpan! Memuat ulang summary...")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Gagal update data: {e}")
+                    st.cache_data.clear()
+                    conn.reset() 
+                    
+                    # Simpan nama file ke session state supaya script tau file ini sudah diproses
+                    st.session_state["last_uploaded_top"] = ume_file_top.name
+                    st.success("✅ Data berhasil disimpan! Klik tombol **Reload Data / Clear Cache** di atas untuk melihat hasilnya.")
+                except Exception as e:
+                    st.error(f"Gagal update data: {e}")
 
 st.divider()
 
