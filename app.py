@@ -7,6 +7,7 @@ import math
 from streamlit_gsheets import GSheetsConnection
 
 # --- 1. KONFIGURASI LAYOUT ---
+# Sidebar otomatis KETEMU & KETEMPO karena initial_sidebar_state="expanded"
 st.set_page_config(page_title="Site Down Monitoring", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
@@ -106,7 +107,14 @@ with st.spinner('⏳ Sedang menyinkronkan data dari Google Sheets...'):
 # --- 6. PROSES DATA DENGAN LOGIC DINAMIS ---
 if df_dapot is not None:
     if df_ume.empty or len(df_ume) == 0:
-        st.warning("⚠️ Database UME masih kosong. Silakan upload file terbaru melalui menu di sebelah kiri.")
+        st.warning("⚠️ **Database UME masih kosong atau belum ter-load!**")
+        st.info("👈 **Cara Upload:** Panel menu di sebelah kiri sudah terbuka otomatis. Silakan upload file UME terbaru (Excel/CSV) pada menu **Update Data UME**.")
+        
+        # Tombol manual reload buat jaga-jaga kalau user pengen refresh cepat
+        if st.button("🔄 Reload Data Sekarang", use_container_width=False):
+            st.cache_data.clear()
+            conn.reset()
+            st.rerun()
     else:
         try:
             if 'Occurrence Time' in df_ume.columns:
