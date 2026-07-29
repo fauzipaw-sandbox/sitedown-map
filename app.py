@@ -23,7 +23,7 @@ st.markdown("""
 # --- 2. KONFIGURASI MASTER SPREADSHEET URL ---
 MASTER_SHEET_URL = "https://docs.google.com/spreadsheets/d/11pp1YavJsR6wnYcvs0Z6B94KM75clu7FQgRy7sdEQ4g"
 
-# --- 3. MASTER KOLOM UME (DISAMAKAN DENGAN FORMAT BROADCAST UME) ---
+# --- 3. MASTER KOLOM UME ---
 KOLOM_MASTER = [
     'Alarm ID',
     'ME ID', 
@@ -45,6 +45,7 @@ def get_nearest_up_sites(lat, lon, df_up, k=2):
         dlat = lat2 - lat1
         dlon = lon2 - lon1
         a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+        a = max(0.0, min(1.0, a)) # Proteksi math domain error
         c = 2 * math.asin(math.sqrt(a))
         return 6371 * c
     
@@ -54,7 +55,6 @@ def get_nearest_up_sites(lat, lon, df_up, k=2):
     return closest['Site_ID'].tolist(), closest['NE_CLEAN'].tolist()
 
 def find_col(df, possible_names):
-    """Fungsi pembantu untuk mencari nama kolom secara fleksibel (mengabaikan spasi dan kapitalisasi)"""
     df_cols_clean = {c.strip().lower(): c for c in df.columns}
     for name in possible_names:
         clean_name = name.strip().lower()
@@ -64,7 +64,7 @@ def find_col(df, possible_names):
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- 5. HEADER & EXPANDER UPDATE UTAMA (DI ATAS LAYAR) ---
+# --- 5. HEADER & EXPANDER UPDATE UTAMA ---
 st.title("🗺️ Site Down Monitoring")
 st.markdown("Monitoring status Site (Up/Down) berdasarkan data alarm.")
 
@@ -113,23 +113,13 @@ st.divider()
 # --- 6. TARIK DATA DARI DATABASE ---
 with st.spinner('⏳ Sedang menyinkronkan data...'):
     try:
-        df_dapot = conn.read(
-            spreadsheet=MASTER_SHEET_URL, 
-            worksheet=1, 
-            sql="SELECT *",
-            ttl=300
-        )
+        df_dapot = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet=1, sql="SELECT *", ttl=300)
     except Exception as e:
         st.error(f"Gagal menarik data site: {e}")
         df_dapot = None
         
     try:
-        df_ume = conn.read(
-            spreadsheet=MASTER_SHEET_URL, 
-            worksheet=0, 
-            sql="SELECT *",
-            ttl=300
-        )
+        df_ume = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet=0, sql="SELECT *", ttl=300)
     except Exception as e:
         st.error(f"Gagal menarik data alarm: {e}")
         df_ume = pd.DataFrame()
@@ -149,6 +139,7 @@ if df_dapot is not None:
                 
             st.info(f"🕒 **Pembaruan Data Terakhir (Berdasarkan Alarm):** {last_update_str}")
             
+            # --- FUNGSI CLEANING ID ---
             def clean_id(text):
                 val = str(text).strip()
                 return val[:-2] if val.endswith('.0') else val
@@ -164,27 +155,81 @@ if df_dapot is not None:
                 except:
                     return str(text)
 
-            # Ekstraksi ID ganda dari ME ID DAN Site Name(Office) untuk akurasi maksimal
-            me_clean_list = set()
-            if 'ME ID' in df_ume.columns:
-                cleaned_me = df_ume['ME ID'].apply(clean_id)
-                me_clean_list.update(cleaned_me.dropna().unique())
-            if 'Site Name(Office)' in df_ume.columns:
-                cleaned_site_office = df_ume['Site Name(Office)'].apply(get_6digit_id)
-                me_clean_list.update(cleaned_site_office.dropna().unique())
-
-            # Simpan ke dataframe UME dengan kolom bantu pencocokan
-            df_ume['ME_CLEAN_1'] = df_ume['ME ID'].apply(clean_id) if 'ME ID' in df_ume.columns else ""
-            df_ume['ME_CLEAN_2'] = df_ume['Site Name(Office)'].apply(get_6digit_id) if 'Site Name(Office)' in df_ume.columns else ""
-
-            if 'NE ID' in df_dapot.columns:
-                df_dapot['NE_CLEAN'] = df_dapot['NE ID'].apply(clean_id)
-            elif 'Site_ID' in df_dapot.columns:
-                df_dapot['NE_CLEAN'] = df_dapot['Site_ID'].apply(get_6digit_id)
+            # --- VEKTORISASI DETAIL SEMUA ALARM ---
+            if 'Occurrence Time' in df_ume.columns and 'Alarm Code Name' in df_ume.columns:
+                df_ume['Alarm_Detail'] = "• " + df_ume['Alarm Code Name'].astype(str) + " (" + df_ume['Occurrence Time'].astype(str) + ")"
+            elif 'Alarm Code Name' in df_ume.columns:
+                df_ume['Alarm_Detail'] = "• " + df_ume['Alarm Code Name'].astype(str)
             else:
-                st.error("Kolom ID valid tidak ditemukan pada data site.")
-                st.stop()
+                df_ume['Alarm_Detail'] = "• Unknown Alarm"
+            
+            dict1 = {}
+            if 'ME ID' in df_ume.columns:
+                df_ume['V1'] = df_ume['ME ID'].apply(clean_id)
+                mask1 = (df_ume['V1'] != '') & (df_ume['V1'].notna())
+                dict1 = df_ume[mask1].groupby('V1')['Alarm_Detail'].apply(lambda x: "<br>".join(x.unique())).to_dict()
+                
+            dict2 = {}
+            if 'Site Name(Office)' in df_ume.columns:
+                df_ume['V2'] = df_ume['Site Name(Office)'].apply(get_6digit_id)
+                mask2 = (df_ume['V2'] != '') & (df_ume['V2'].notna())
+                dict2 = df_ume[mask2].groupby('V2')['Alarm_Detail'].apply(lambda x: "<br>".join(x.unique())).to_dict()
+                
+            all_alarm_dict = {}
+            for k in set(dict1.keys()).union(set(dict2.keys())):
+                if k and str(k).lower() not in ['nan', 'none', '']:
+                    items = []
+                    if k in dict1: items.extend(dict1[k].split('<br>'))
+                    if k in dict2: items.extend(dict2[k].split('<br>'))
+                    all_alarm_dict[k] = "<br>".join(list(dict.fromkeys(items)))
 
+            # --- FILTER KHUSUS ALARM DOWN (POWER OFF / LINK BROKEN) ---
+            cond_power = pd.Series(False, index=df_ume.index)
+            cond_link1 = pd.Series(False, index=df_ume.index)
+            cond_link2 = pd.Series(False, index=df_ume.index)
+            
+            if 'Alarm Code Name' in df_ume.columns:
+                cond_power = df_ume['Alarm Code Name'].str.contains('Input power-off', case=False, na=False)
+                if 'Position' in df_ume.columns:
+                    cond_power = cond_power & (df_ume['Position'].astype(str).str.strip() == 'Equipment=1')
+                    
+                cond_link1 = df_ume['Alarm Code Name'].str.contains('The link between the server and the ME is broken', case=False, na=False)
+                cond_link2 = df_ume['Alarm Code Name'].str.contains('Site Abis control link broken', case=False, na=False)
+                
+            if 'Specific Problem' in df_ume.columns:
+                cond_link1 = cond_link1 | df_ume['Specific Problem'].str.contains('The link between the server and the ME is broken', case=False, na=False)
+                cond_link2 = cond_link2 | df_ume['Specific Problem'].str.contains('Site Abis control link broken', case=False, na=False)
+
+            df_down = df_ume[cond_power | cond_link1 | cond_link2].copy()
+            
+            # --- VEKTORISASI DURASI MINIMAL ---
+            down_ids = set()
+            min_occurrence = {}
+            if 'Occurrence Time' in df_down.columns:
+                df_down['Occurrence_DT'] = pd.to_datetime(df_down['Occurrence Time'], errors='coerce')
+                
+                min1 = {}
+                if 'V1' in df_down.columns:
+                    valid_v1 = df_down.dropna(subset=['Occurrence_DT', 'V1'])
+                    min1 = valid_v1.groupby('V1')['Occurrence_DT'].min().to_dict()
+                    down_ids.update(valid_v1['V1'].unique())
+                    
+                min2 = {}
+                if 'V2' in df_down.columns:
+                    valid_v2 = df_down.dropna(subset=['Occurrence_DT', 'V2'])
+                    min2 = valid_v2.groupby('V2')['Occurrence_DT'].min().to_dict()
+                    down_ids.update(valid_v2['V2'].unique())
+                    
+                keys_min = set(min1.keys()).union(set(min2.keys()))
+                for k in keys_min:
+                    if k and str(k).lower() not in ['nan', 'none', '']:
+                        t1 = min1.get(k, pd.NaT)
+                        t2 = min2.get(k, pd.NaT)
+                        if pd.notnull(t1) and pd.notnull(t2): min_occurrence[k] = min(t1, t2)
+                        elif pd.notnull(t1): min_occurrence[k] = t1
+                        elif pd.notnull(t2): min_occurrence[k] = t2
+
+            # --- PENGKONDISIAN DATA MASTER SITE ---
             if 'LAT' in df_dapot.columns and 'LONG' in df_dapot.columns:
                 df_dapot['LAT'] = df_dapot['LAT'].astype(str).str.replace(',', '.').astype(float)
                 df_dapot['LONG'] = df_dapot['LONG'].astype(str).str.replace(',', '.').astype(float)
@@ -195,76 +240,15 @@ if df_dapot is not None:
             if 'Hub site' in df_dapot.columns:
                 df_dapot['Hub site'] = df_dapot['Hub site'].fillna('Non Hub')
 
-            if 'Occurrence Time' in df_ume.columns and 'Alarm Code Name' in df_ume.columns:
-                df_ume['Alarm_Detail'] = "• " + df_ume['Alarm Code Name'].astype(str) + " (" + df_ume['Occurrence Time'].astype(str) + ")"
-            elif 'Alarm Code Name' in df_ume.columns:
-                df_ume['Alarm_Detail'] = "• " + df_ume['Alarm Code Name'].astype(str)
-            else:
-                df_ume['Alarm_Detail'] = "• Unknown Alarm"
+            # Vektorisasi pengecekan status (bebas looping)
+            df_dapot['C1'] = df_dapot['NE ID'].apply(clean_id) if 'NE ID' in df_dapot.columns else ""
+            df_dapot['C2'] = df_dapot['Site_ID'].astype(str).apply(get_6digit_id) if 'Site_ID' in df_dapot.columns else ""
+            df_dapot['C3'] = df_dapot['Site_Name'].astype(str).apply(get_6digit_id) if 'Site_Name' in df_dapot.columns else ""
+            df_dapot['NE_CLEAN'] = df_dapot['C1'].replace("", pd.NA).fillna(df_dapot['C2'].replace("", pd.NA)).fillna(df_dapot['C3']).fillna("")
             
-            # Gabungkan alarm berdasarkan kedua sisi ID/Name
-            all_alarm_dict = {}
-            for _, r in df_ume.iterrows():
-                val1 = str(r.get('ME_CLEAN_1', '')).strip()
-                val2 = str(r.get('ME_CLEAN_2', '')).strip()
-                detail = r.get('Alarm_Detail', '')
-                for v in [val1, val2]:
-                    if v and v.lower() != 'nan':
-                        if v not in all_alarm_dict:
-                            all_alarm_dict[v] = []
-                        all_alarm_dict[v].append(detail)
-            
-            # Ubah list alarm menjadi string HTML terstruktur
-            for k in all_alarm_dict:
-                all_alarm_dict[k] = "<br>".join(list(set(all_alarm_dict[k])))
-
-            if 'Position' in df_ume.columns and 'Specific Problem' in df_ume.columns:
-                cond_power = (df_ume['Alarm Code Name'].str.contains('Input power-off', case=False, na=False)) & \
-                             (df_ume['Position'].astype(str).str.strip() == 'Equipment=1')
-                cond_link1 = (df_ume['Specific Problem'].str.contains('The link between the server and the ME is broken', case=False, na=False)) | \
-                             (df_ume['Alarm Code Name'].str.contains('The link between the server and the ME is broken', case=False, na=False))
-                cond_link2 = (df_ume['Specific Problem'].str.contains('Site Abis control link broken', case=False, na=False)) | \
-                             (df_ume['Alarm Code Name'].str.contains('Site Abis control link broken', case=False, na=False))
-            else:
-                cond_power = df_ume['Alarm Code Name'].str.contains('Input power-off', case=False, na=False)
-                cond_link1 = df_ume['Alarm Code Name'].str.contains('The link between the server and the ME is broken', case=False, na=False)
-                cond_link2 = df_ume['Alarm Code Name'].str.contains('Site Abis control link broken', case=False, na=False)
-            
-            df_down = df_ume[cond_power | cond_link1 | cond_link2].copy()
-            
-            min_occurrence = {}
-            if 'Occurrence Time' in df_down.columns:
-                df_down['Occurrence_DT'] = pd.to_datetime(df_down['Occurrence Time'], errors='coerce')
-                for _, r in df_down.iterrows():
-                    dt = r['Occurrence_DT']
-                    if pd.notnull(dt):
-                        for v in [str(r.get('ME_CLEAN_1', '')).strip(), str(r.get('ME_CLEAN_2', '')).strip()]:
-                            if v and v.lower() != 'nan':
-                                if v not in min_occurrence or dt < min_occurrence[v]:
-                                    min_occurrence[v] = dt
-
-            # Cek status Down berdasarkan kecocokan di ME ID atau Site Name(Office)
-            def check_status(row):
-                ne = str(row['NE_CLEAN']).strip()
-                site_id_raw = str(row.get('Site_ID', '')).strip()
-                site_name_raw = str(row.get('Site_Name', '')).strip()
-                
-                candidates = [ne, get_6digit_id(site_id_raw), get_6digit_id(site_name_raw)]
-                for c in candidates:
-                    if c in me_clean_list:
-                        return 'Down'
-                return 'Up'
-
-            df_dapot['Status'] = df_dapot.apply(check_status, axis=1)
-
-            df_up_all = df_dapot[(df_dapot['Status'] == 'Up') & df_dapot['LAT'].notna() & df_dapot['LONG'].notna()]
-            suggestion_site_ids = {}
-            suggested_up_ids = set()
-            
-            for idx, row in df_dapot[df_dapot['Status'] == 'Down'].iterrows():
-                site_ids, ne_cleans = get_nearest_up_sites(row['LAT'], row['LONG'], df_up_all, k=2)
-                suggestion_site_ids[row['NE_CLEAN']] = site_ids if site_ids else ["-"]
-                suggested_up_ids.update(ne_cleans)
+            cond_status = df_dapot['C1'].isin(down_ids) | df_dapot['C2'].isin(down_ids) | df_dapot['C3'].isin(down_ids)
+            df_dapot['Status'] = 'Up'
+            df_dapot.loc[cond_status, 'Status'] = 'Down'
 
             def format_durasi(start_time):
                 if pd.isnull(start_time): return "-"
@@ -294,10 +278,6 @@ if df_dapot is not None:
 
             col_stats, col_map = st.columns([1.5, 2.5]) 
             
-            # Default filter di-set ke NOP Palangkaraya agar tidak berat
-            filter_col = 'NOP'
-            filter_val = 'Palangkaraya'
-            
             with col_stats:
                 col_stat_text, col_stat_toggle1, col_stat_toggle2 = st.columns([2, 1, 1])
                 col_stat_text.subheader("📊 Ringkasan")
@@ -313,36 +293,47 @@ if df_dapot is not None:
                 
                 tab1, tab2, tab3, tab4 = st.tabs(["NOP", "Kabupaten", "Kecamatan", "Hub/Non Hubsite"])
                 
+                nop_df = get_summary_table('NOP')
+                kab_df = get_summary_table('Kota/Kab')
+                kec_df = get_summary_table('Kecamatan')
+                hub_df = get_summary_table('Hub site')
+                
                 with tab1:
-                    nop_df = get_summary_table('NOP')
                     event_nop = st.dataframe(nop_df, height=300, use_container_width=True, on_select="rerun", selection_mode="single-row")
-                    if len(event_nop.selection.rows) > 0:
-                        filter_col = 'NOP'
-                        filter_val = nop_df.index[event_nop.selection.rows[0]]
-                    else:
-                        filter_col = 'NOP'
-                        filter_val = 'Palangkaraya'
-                        
                 with tab2:
-                    kab_df = get_summary_table('Kota/Kab')
                     event_kab = st.dataframe(kab_df, height=300, use_container_width=True, on_select="rerun", selection_mode="single-row")
-                    if len(event_kab.selection.rows) > 0:
-                        filter_col = 'Kota/Kab'
-                        filter_val = kab_df.index[event_kab.selection.rows[0]]
-                        
                 with tab3:
-                    kec_df = get_summary_table('Kecamatan')
                     event_kec = st.dataframe(kec_df, height=300, use_container_width=True, on_select="rerun", selection_mode="single-row")
-                    if len(event_kec.selection.rows) > 0:
-                        filter_col = 'Kecamatan'
-                        filter_val = kec_df.index[event_kec.selection.rows[0]]
-                        
                 with tab4:
-                    hub_df = get_summary_table('Hub site')
                     event_hub = st.dataframe(hub_df, height=300, use_container_width=True, on_select="rerun", selection_mode="single-row")
-                    if len(event_hub.selection.rows) > 0:
-                        filter_col = 'Hub site'
-                        filter_val = hub_df.index[event_hub.selection.rows[0]]
+                    
+            # --- PENGUNCIAN DEFAULT FILTER (NOP PALANGKARAYA) ---
+            filter_col = None
+            filter_val = None
+            
+            if len(event_nop.selection.rows) > 0:
+                filter_col = 'NOP'
+                filter_val = nop_df.index[event_nop.selection.rows[0]]
+            elif len(event_kab.selection.rows) > 0:
+                filter_col = 'Kota/Kab'
+                filter_val = kab_df.index[event_kab.selection.rows[0]]
+            elif len(event_kec.selection.rows) > 0:
+                filter_col = 'Kecamatan'
+                filter_val = kec_df.index[event_kec.selection.rows[0]]
+            elif len(event_hub.selection.rows) > 0:
+                filter_col = 'Hub site'
+                filter_val = hub_df.index[event_hub.selection.rows[0]]
+            else:
+                # Mengunci Default secara ketat agar tidak load selindo
+                filter_col = 'NOP'
+                if not nop_df.empty:
+                    match_pal = nop_df.index[nop_df.index.astype(str).str.contains('Palangka', case=False, na=False)]
+                    if len(match_pal) > 0:
+                        filter_val = match_pal[0]
+                    else:
+                        filter_val = nop_df.index[0]
+                else:
+                    filter_val = None
 
             with col_map:
                 df_map = df_dapot.copy()
@@ -352,6 +343,16 @@ if df_dapot is not None:
                 else:
                     st.write("") 
                 
+                # --- HITUNG JARAK TETANGGA HANYA PADA DATA YANG DITAMPILKAN ---
+                suggestion_site_ids = {}
+                suggested_up_ids = set()
+                df_up_all = df_dapot[(df_dapot['Status'] == 'Up') & df_dapot['LAT'].notna() & df_dapot['LONG'].notna()]
+                
+                for idx, row in df_map[df_map['Status'] == 'Down'].iterrows():
+                    site_ids, ne_cleans = get_nearest_up_sites(row['LAT'], row['LONG'], df_up_all, k=2)
+                    suggestion_site_ids[row['NE_CLEAN']] = site_ids if site_ids else ["-"]
+                    suggested_up_ids.update(ne_cleans)
+
                 if 'LAT' in df_map.columns and 'LONG' in df_map.columns:
                     df_map = df_map.dropna(subset=['LAT', 'LONG'])
                     
@@ -384,7 +385,7 @@ if df_dapot is not None:
                         for idx, row in df_map.iterrows():
                             lat, lon = row['LAT'], row['LONG']
                             site_id = row.get('Site_ID', 'Unknown')
-                            ne_id = row.get('NE_CLEAN', 'Unknown')
+                            ne_id = str(row.get('NE_CLEAN', 'Unknown'))
                             site_name = row.get('Site_Name', 'Unknown')
                             site_class = row.get('SITE CLASS', row.get('Site_Class', '-'))
                             status = row['Status']
@@ -410,6 +411,7 @@ if df_dapot is not None:
                                 jumlah_anakan = 0
 
                             site_id_anakan = row[col_id_anakan] if col_id_anakan and pd.notnull(row[col_id_anakan]) else '-'
+                            route_link = row.get('Route', row.get('Link_Route', ''))
                             
                             if status == 'Down':
                                 color_hex = '#e60000'
@@ -422,20 +424,27 @@ if df_dapot is not None:
                                     color_hex = '#00802b'
                                     status_label = '<b style="color:green;">Up</b>'
 
-                            # Ambil detail alarm berdasarkan pencarian ganda ID
+                            # Eksekusi pencarian detail seluruh alarm
                             alarms_terkait = "<i style='color:gray;'>Tidak ada alarm aktif</i>"
-                            for key_candidate in [ne_id, get_6digit_id(site_id), get_6digit_id(site_name)]:
-                                if key_candidate in all_alarm_dict:
+                            for key_candidate in [row['C1'], row['C2'], row['C3']]:
+                                if key_candidate and key_candidate in all_alarm_dict:
                                     alarms_terkait = all_alarm_dict[key_candidate]
                                     break
 
                             start_dt = None
-                            for key_candidate in [ne_id, get_6digit_id(site_id), get_6digit_id(site_name)]:
-                                if key_candidate in min_occurrence:
+                            for key_candidate in [row['C1'], row['C2'], row['C3']]:
+                                if key_candidate and key_candidate in min_occurrence:
                                     start_dt = min_occurrence[key_candidate]
                                     break
 
                             durasi_str = f" (Durasi: {format_durasi(start_dt)})" if (status == 'Down' and start_dt) else ""
+                            
+                            route_html_button = ""
+                            if pd.notnull(route_link) and str(route_link).strip() != "" and str(route_link).lower() != "nan":
+                                route_html_button = f'''
+                                <hr style="margin: 5px 0;">
+                                <a href="{route_link}" target="_blank" style="display:block; text-align:center; background:#1a73e8; color:white; padding:5px; text-decoration:none; border-radius:4px; font-weight:bold;">🔗 Buka Link Route</a>
+                                '''
 
                             html_detail = f"""
                             <div style="width: 270px; font-size:12px; color:black; white-space: normal; line-height: 1.4;">
@@ -453,6 +462,7 @@ if df_dapot is not None:
                                 <div style="font-size:10px; max-height:100px; overflow-y:auto; background-color:#f1f1f1; padding:5px; border-radius:4px;">
                                     {alarms_terkait}
                                 </div>
+                                {route_html_button}
                             </div>
                             """
                             
@@ -482,18 +492,13 @@ if df_dapot is not None:
             st.divider()
             st.subheader("📋 Detail Site Down")
             
-            df_dapot_down = df_dapot[df_dapot['Status'] == 'Down'].copy()
-            
-            if filter_col and filter_val:
-                df_dapot_down = df_dapot_down[df_dapot_down[filter_col] == filter_val]
+            # Tabel bawah diambil langsung dari df_map yang sudah terfilter (lebih optimal)
+            df_dapot_down = df_map[df_map['Status'] == 'Down'].copy()
             
             if not df_dapot_down.empty:
-                # Mapping durasi menggunakan pengecekan multi-kandidat ID
                 def get_down_time(row):
-                    candidates = [str(row['NE_CLEAN']).strip(), get_6digit_id(row.get('Site_ID', '')), get_6digit_id(row.get('Site_Name', ''))]
-                    for c in candidates:
-                        if c in min_occurrence:
-                            return min_occurrence[c]
+                    for c in [row['C1'], row['C2'], row['C3']]:
+                        if c in min_occurrence: return min_occurrence[c]
                     return pd.NaT
 
                 df_dapot_down['Occurrence_Time'] = df_dapot_down.apply(get_down_time, axis=1)
