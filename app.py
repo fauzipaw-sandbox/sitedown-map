@@ -349,11 +349,11 @@ if df_dapot is not None:
                             hub_status = 'Non Hub' if not hub_val or hub_val.lower() == 'nan' else hub_val
                             is_hub = 'hub' in hub_status.lower() and 'non' not in hub_status.lower()
                             
-                            # Pencarian kolom secara fleksibel untuk data jaringan
+                            # Pencarian kolom secara spesifik dengan prioritas 'JUMLAH SITE ANAKAN'
                             col_transport = find_col(df_dapot, ['Transport Type', 'Transport', 'Transport_Type'])
                             col_simpul = find_col(df_dapot, ['Simpul 4G/Hub Simpul', 'Simpul 4G', 'Hub Simpul'])
-                            col_jml_anakan = find_col(df_dapot, ['Jumlah anakan', 'Jumlah Anakan', 'Jml Anakan'])
-                            col_id_anakan = find_col(df_dapot, ['Site id anakan', 'Site ID Anakan', 'ID Anakan'])
+                            col_jml_anakan = find_col(df_dapot, ['JUMLAH SITE ANAKAN', 'Jumlah anakan', 'Jumlah Anakan', 'Jml Anakan'])
+                            col_id_anakan = find_col(df_dapot, ['SITE ID ANAKAN', 'Site id anakan', 'Site ID Anakan', 'ID Anakan'])
                             
                             transport_type = row[col_transport] if col_transport and pd.notnull(row[col_transport]) else '-'
                             simpul_4g = row[col_simpul] if col_simpul and pd.notnull(row[col_simpul]) else '-'
