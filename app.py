@@ -4,9 +4,10 @@ import folium
 from streamlit_folium import st_folium
 from datetime import datetime
 import math
+from streamlit_gsheets import GSheetsConnection
 
-# --- 1. KONFIGURASI LAYOUT 1 HALAMAN ---
-st.set_page_config(page_title="Site Down Monitoring", layout="wide", initial_sidebar_state="collapsed")
+# --- 1. KONFIGURASI LAYOUT ---
+st.set_page_config(page_title="Site Down Monitoring", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
     <style>
@@ -19,96 +20,157 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. FUNGSI TARIK DATA & JARAK (HAVERSINE) ---
-SHEET_URL = "https://docs.google.com/spreadsheets/d/11pp1YavJsR6wnYcvs0Z6B94KM75clu7FQgRy7sdEQ4g/export?format=csv&gid=0"
+# --- 2. KONFIGURASI MASTER SPREADSHEET URL ---
+MASTER_SHEET_URL = "https://docs.google.com/spreadsheets/d/11pp1YavJsR6wnYcvs0Z6B94KM75clu7FQgRy7sdEQ4g"
 
-@st.cache_data(ttl=600)
-def load_dapot():
-    try:
-        return pd.read_csv(SHEET_URL)
-    except Exception as e:
-        st.error(f"Gagal narik Dapot. Error: {e}")
-        return None
+# Buka koneksi ke GSheets
+conn = st.connection("gsheets", type=GSheetsConnection)
 
+# --- 3. FUNGSI JARAK (HAVERSINE) ---
 def get_nearest_up_sites(lat, lon, df_up, k=2):
     if pd.isna(lat) or pd.isna(lon) or df_up.empty:
         return [], []
     def calc_dist(row):
         if pd.isna(row['LAT']) or pd.isna(row['LONG']): return float('inf')
-            
         lat1, lon1, lat2, lon2 = map(math.radians, [lat, lon, row['LAT'], row['LONG']])
         dlat = lat2 - lat1
         dlon = lon2 - lon1
         a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
         c = 2 * math.asin(math.sqrt(a))
-        return 6371 * c # Radius bumi di kilometer
+        return 6371 * c
     
     distances = df_up.apply(calc_dist, axis=1)
     closest_idx = distances.nsmallest(k).index
     closest = df_up.loc[closest_idx]
-    
     return closest['Site_ID'].tolist(), closest['NE_CLEAN'].tolist()
 
-# --- 3. HEADER & UPLOAD SECTION ---
-col_title, col_upload = st.columns([2, 1])
-with col_title:
-    st.title("🗺️ Site Down Monitoring")
-    st.markdown("Monitoring status Site (Up/Down) berdasarkan alarm UME.")
-with col_upload:
-    ume_file = st.file_uploader("Upload UME (fm-active.xlsx)", type=['xlsx'], label_visibility="collapsed")
+# --- 4. SIDEBAR UNTUK UPLOAD & UPDATE DATA (ALL COLUMNS) ---
+with st.sidebar:
+    st.header("⚙️ Update Data UME")
+    st.markdown("Upload file UME terbaru di sini. Data akan disimpan utuh ke Google Sheets pada tab **All_Alarm**.")
+    ume_file = st.file_uploader("Pilih file UME (Excel/CSV)", type=['xlsx', 'csv'])
+    
+    if ume_file:
+        with st.spinner("⏳ Menyimpan seluruh data ke tab All_Alarm..."):
+            try:
+                # Baca semua kolom apa adanya
+                if ume_file.name.endswith('.csv'):
+                    df_new = pd.read_csv(ume_file)
+                else:
+                    df_new = pd.read_excel(ume_file)
+                    
+                if 'Occurrence Time' in df_new.columns:
+                    df_new['Occurrence Time'] = df_new['Occurrence Time'].astype(str)
+                
+                # Timpa data di tab All_Alarm dengan dataframe utuh yang baru
+                conn.update(spreadsheet=MASTER_SHEET_URL, worksheet="All_Alarm", data=df_new)
+                st.success("✅ Data berhasil disimpan utuh ke Google Sheets!")
+                st.cache_data.clear() # Bersihin cache biar layar auto-update
+                st.rerun()
+            except Exception as e:
+                st.error(f"Gagal update data: {e}")
 
-with st.spinner('⏳ Sedang menarik data Dapot dari Google Sheets...'):
-    df_dapot = load_dapot()
+# --- 5. HEADER & LOAD DATA DARI KEDUA TAB ---
+st.title("🗺️ Site Down Monitoring")
+st.markdown("Monitoring status Site (Up/Down) berdasarkan alarm UME.")
 
-# --- 4. PROSES DATA & RENDER ---
-if df_dapot is not None and ume_file:
+with st.spinner('⏳ Sedang menyinkronkan data dari Google Sheets...'):
     try:
-        with st.spinner('⏳ Memproses data UME dan mengkalkulasi area...'):
-            df_ume = pd.read_excel(ume_file)
-            
-            # --- GET DATA UPDATE TERAKHIR ---
+        # Tarik tab Data Site
+        df_dapot = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet="Data Site", ttl=600)
+    except Exception as e:
+        st.error(f"Gagal menarik tab Data Site: {e}")
+        df_dapot = None
+        
+    try:
+        # Tarik tab All_Alarm
+        df_ume = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet="All_Alarm", ttl=600)
+    except Exception as e:
+        df_ume = pd.DataFrame()
+
+# --- 6. PROSES DATA DENGAN LOGIC DINAMIS ---
+if df_dapot is not None:
+    if df_ume.empty or len(df_ume) == 0:
+        st.warning("⚠️ Database UME di tab 'All_Alarm' masih kosong. Silakan upload file terbaru melalui menu di sebelah kiri.")
+    else:
+        try:
             if 'Occurrence Time' in df_ume.columns:
                 latest_time = pd.to_datetime(df_ume['Occurrence Time'], errors='coerce').max()
                 last_update_str = latest_time.strftime("%d-%m-%Y %H:%M:%S") if pd.notnull(latest_time) else "Tidak diketahui"
             else:
                 last_update_str = "Tidak diketahui"
                 
-            # Menampilkan info update di atas dashboard
             st.info(f"🕒 **Data Update Terakhir (Berdasarkan Alarm):** {last_update_str}")
             
+            # === LOGIC DINAMIS PENCARIAN ID ===
             def clean_id(text):
                 val = str(text).strip()
                 return val[:-2] if val.endswith('.0') else val
 
-            df_ume['ME_CLEAN'] = df_ume['ME ID'].apply(clean_id) if 'ME ID' in df_ume.columns else st.stop()
-            df_dapot['NE_CLEAN'] = df_dapot['NE ID'].apply(clean_id) if 'NE ID' in df_dapot.columns else st.stop()
+            def get_6digit_id(text):
+                try:
+                    val = str(text).strip()
+                    if val.endswith('.0'): val = val[:-2]
+                    if val.upper().startswith('C_') or val.upper().startswith('N_'):
+                        return val[2:8].upper()
+                    else:
+                        return val[:6].upper()
+                except:
+                    return str(text)
 
+            # Cek kolom ID yang tersedia di UME
+            if 'ME ID' in df_ume.columns:
+                df_ume['ME_CLEAN'] = df_ume['ME ID'].apply(clean_id)
+            elif 'Site Name(Office)' in df_ume.columns:
+                df_ume['ME_CLEAN'] = df_ume['Site Name(Office)'].apply(get_6digit_id)
+            else:
+                st.error("Kolom 'ME ID' atau 'Site Name(Office)' tidak ditemukan di tab All_Alarm!")
+                st.stop()
+                
+            # Cek kolom ID yang tersedia di Dapot
+            if 'NE ID' in df_dapot.columns:
+                df_dapot['NE_CLEAN'] = df_dapot['NE ID'].apply(clean_id)
+            elif 'Site_ID' in df_dapot.columns:
+                df_dapot['NE_CLEAN'] = df_dapot['Site_ID'].apply(clean_id)
+            else:
+                st.error("Kolom 'NE ID' atau 'Site_ID' tidak ditemukan di tab Data Site!")
+                st.stop()
+
+            # Bersihkan Koordinat
             if 'LAT' in df_dapot.columns and 'LONG' in df_dapot.columns:
                 df_dapot['LAT'] = df_dapot['LAT'].astype(str).str.replace(',', '.').astype(float)
                 df_dapot['LONG'] = df_dapot['LONG'].astype(str).str.replace(',', '.').astype(float)
 
-            if 'Kota/Kab' in df_dapot.columns:
-                df_dapot['Kota/Kab'] = df_dapot['Kota/Kab'].apply(lambda x: str(x).title() if pd.notnull(x) else x)
-            if 'Kecamatan' in df_dapot.columns:
-                df_dapot['Kecamatan'] = df_dapot['Kecamatan'].apply(lambda x: str(x).title() if pd.notnull(x) else x)
+            for col in ['Kota/Kab', 'Kecamatan']:
+                if col in df_dapot.columns:
+                    df_dapot[col] = df_dapot[col].apply(lambda x: str(x).title() if pd.notnull(x) else x)
             if 'Hub site' in df_dapot.columns:
                 df_dapot['Hub site'] = df_dapot['Hub site'].fillna('Non Hub')
 
-            if 'Occurrence Time' in df_ume.columns:
+            # Ekstrak Alarm Detail
+            if 'Occurrence Time' in df_ume.columns and 'Alarm Code Name' in df_ume.columns:
                 df_ume['Alarm_Detail'] = "• " + df_ume['Alarm Code Name'].astype(str) + " (" + df_ume['Occurrence Time'].astype(str) + ")"
-            else:
+            elif 'Alarm Code Name' in df_ume.columns:
                 df_ume['Alarm_Detail'] = "• " + df_ume['Alarm Code Name'].astype(str)
+            else:
+                df_ume['Alarm_Detail'] = "• Unknown Alarm"
             
             all_alarm_dict = df_ume.groupby('ME_CLEAN')['Alarm_Detail'].apply(lambda x: "<br>".join(x)).to_dict()
 
-            cond_power = (df_ume['Alarm Code Name'].str.contains('Input power-off', case=False, na=False)) & \
-                         (df_ume['Position'].astype(str).str.strip() == 'Equipment=1')
-                         
-            cond_link1 = (df_ume['Specific Problem'].str.contains('The link between the server and the ME is broken', case=False, na=False)) | \
-                         (df_ume['Alarm Code Name'].str.contains('The link between the server and the ME is broken', case=False, na=False))
-            
-            cond_link2 = (df_ume['Specific Problem'].str.contains('Site Abis control link broken', case=False, na=False)) | \
-                         (df_ume['Alarm Code Name'].str.contains('Site Abis control link broken', case=False, na=False))
+            # === LOGIC DINAMIS PENENTUAN DOWN ===
+            # Kalau kolom lengkap (dari file fm-active utuh), pakai rule strict
+            if 'Position' in df_ume.columns and 'Specific Problem' in df_ume.columns:
+                cond_power = (df_ume['Alarm Code Name'].str.contains('Input power-off', case=False, na=False)) & \
+                             (df_ume['Position'].astype(str).str.strip() == 'Equipment=1')
+                cond_link1 = (df_ume['Specific Problem'].str.contains('The link between the server and the ME is broken', case=False, na=False)) | \
+                             (df_ume['Alarm Code Name'].str.contains('The link between the server and the ME is broken', case=False, na=False))
+                cond_link2 = (df_ume['Specific Problem'].str.contains('Site Abis control link broken', case=False, na=False)) | \
+                             (df_ume['Alarm Code Name'].str.contains('Site Abis control link broken', case=False, na=False))
+            # Kalau kolom minim (dari broadcast), pakai rule simple
+            else:
+                cond_power = df_ume['Alarm Code Name'].str.contains('Input power-off', case=False, na=False)
+                cond_link1 = df_ume['Alarm Code Name'].str.contains('The link between the server and the ME is broken', case=False, na=False)
+                cond_link2 = df_ume['Alarm Code Name'].str.contains('Site Abis control link broken', case=False, na=False)
             
             df_down = df_ume[cond_power | cond_link1 | cond_link2].copy()
             
@@ -164,7 +226,6 @@ if df_dapot is not None and ume_file:
             filter_col = None
             filter_val = None
             
-            # --- KOLOM KIRI (SUMMARY TABEL) ---
             with col_stats:
                 col_stat_text, col_stat_toggle1, col_stat_toggle2 = st.columns([2, 1, 1])
                 col_stat_text.subheader("📊 Summary")
@@ -201,12 +262,11 @@ if df_dapot is not None and ume_file:
                         filter_col = 'Hub site'
                         filter_val = hub_df.index[event_hub.selection.rows[0]]
 
-            # --- KOLOM KANAN (MAPS) ---
             with col_map:
                 df_map = df_dapot.copy()
                 if filter_col and filter_val:
                     df_map = df_map[df_map[filter_col] == filter_val]
-                    st.info(f"📍 Menampilkan Area **{filter_col}: {filter_val}** (Up & Down)")
+                    st.info(f"📍 Menampilkan Area **{filter_col}: {filter_val}**")
                 else:
                     st.write("") 
                 
@@ -254,22 +314,20 @@ if df_dapot is not None and ume_file:
                             is_hub = 'hub' in hub_status.lower() and 'non' not in hub_status.lower()
                             
                             if status == 'Down':
-                                color_hex = '#e60000' # Merah
+                                color_hex = '#e60000'
                                 status_label = '<b style="color:red;">Down</b>'
                             else:
                                 if ne_id in suggested_up_ids:
-                                    color_hex = '#0066ff' # Biru
+                                    color_hex = '#0066ff'
                                     status_label = '<b style="color:#0066ff;">Up (Suggested to Optim)</b>'
                                 else:
-                                    color_hex = '#00802b' # Hijau Normal
+                                    color_hex = '#00802b'
                                     status_label = '<b style="color:green;">Up</b>'
 
                             alarms_terkait = all_alarm_dict.get(ne_id, "<i style='color:gray;'>Tidak ada alarm aktif</i>")
                             start_dt = min_occurrence.get(ne_id) if status == 'Down' else None
                             durasi_str = f" (Durasi: {format_durasi(start_dt)})" if status == 'Down' else ""
                             
-                            # --- UBAH MENJADI HTML TOOLTIP (Hover) ---
-                            # Menambahkan white-space: normal agar pop up tooltip tidak kepanjangan kesamping
                             html_detail = f"""
                             <div style="width: 250px; font-size:12px; color:black; white-space: normal; line-height: 1.4;">
                                 <b style="font-size:14px;">{site_name}</b> <br>
@@ -297,7 +355,6 @@ if df_dapot is not None and ume_file:
                                 
                             combined_html = f'<div style="position:relative; width:12px; height:12px; cursor:pointer;">{shape_html}{label_html}</div>'
 
-                            # Ganti Popup dengan Tooltip agar otomatis muncul pas di-hover
                             folium.Marker(
                                 location=[lat, lon],
                                 icon=folium.DivIcon(html=combined_html, icon_size=(12, 12), icon_anchor=(6, 6)),
@@ -308,8 +365,6 @@ if df_dapot is not None and ume_file:
                         st_folium(m, use_container_width=True, height=520, returned_objects=[])
                     else:
                         st.warning("Tidak ada data site (Up/Down) di area yang dipilih.")
-                else:
-                    st.error("Kolom 'LAT' dan 'LONG' tidak valid!")
 
             # ==========================================
             # LAYOUT BAWAH: TABEL DETAIL SITE
@@ -352,10 +407,7 @@ if df_dapot is not None and ume_file:
                     
                 st.dataframe(df_detail_final, height=350, use_container_width=True)
             else:
-                if filter_col:
-                    st.info(f"🎉 Keren! Tidak ada site yang Down di area {filter_col}: {filter_val}.")
-                else:
-                    st.info("🎉 Keren! Tidak ada site yang Down saat ini.")
+                st.info("🎉 Keren! Tidak ada site yang Down saat ini.")
                     
-    except Exception as e:
-        st.error(f"Terdapat kesalahan saat memproses data: {e}")
+        except Exception as e:
+            st.error(f"Terdapat kesalahan saat memproses data UME: {e}")
