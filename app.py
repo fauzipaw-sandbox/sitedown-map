@@ -7,7 +7,6 @@ import math
 from streamlit_gsheets import GSheetsConnection
 
 # --- 1. KONFIGURASI LAYOUT ---
-# Sidebar otomatis terbuka (expanded) dari awal buka website
 st.set_page_config(page_title="Site Down Monitoring", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
@@ -46,9 +45,9 @@ def get_nearest_up_sites(lat, lon, df_up, k=2):
 # Buka koneksi ke GSheets pakai credential rahasia di Streamlit Secrets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- 4. SIDEBAR UNTUK UPLOAD & UPDATE DATA KE GSHEETS ---
+# --- 4. SIDEBAR UNTUK UPLOAD & UPDATE DATA KE GSHEETS (OPSIONAL) ---
 with st.sidebar:
-    st.header("⚙️ Update Data UME")
+    st.header("⚙️ Update Data UME (Sidebar)")
     st.markdown("Upload file UME terbaru di sini. **Semua kolom** akan disimpan utuh ke tab **All_Alarm**.")
     ume_file = st.file_uploader("Pilih file UME (Excel/CSV)", type=['xlsx', 'csv'], key="uploader_sidebar")
     
@@ -75,10 +74,49 @@ with st.sidebar:
             except Exception as e:
                 st.error(f"Gagal update data: {e}")
 
-# --- 5. HEADER & LOAD DATA DARI GOOGLE SHEETS ---
+# --- 5. HEADER & EXPANDER UPDATE DI UTAMA (ALWAYS STANDBY) ---
 st.title("🗺️ Site Down Monitoring")
 st.markdown("Monitoring status Site (Up/Down) berdasarkan alarm UME.")
 
+# ---> ACCORDION UPLOADER PERMANEN DI ATAS LAYAR <---
+with st.expander("⚙️ **KLIK DI SINI UNTUK UPDATE / UPLOAD DATA UME TERBARU**", expanded=False):
+    st.markdown("Upload file UME terbaru di sini (Excel/CSV). Data lama di tab **All_Alarm** akan otomatis diperbarui.")
+    col_up1, col_up2 = st.columns([2, 1])
+    with col_up1:
+        ume_file_top = st.file_uploader("Pilih file UME (Excel/CSV)", type=['xlsx', 'csv'], key="uploader_top")
+    with col_up2:
+        st.write("") # Spacer biar sejajar
+        st.write("")
+        if st.button("🔄 Reload Data / Clear Cache", use_container_width=True, type="primary"):
+            st.cache_data.clear()
+            conn.reset()
+            st.rerun()
+            
+    if ume_file_top:
+        with st.spinner("⏳ Menyimpan seluruh data ke Google Sheets..."):
+            try:
+                if ume_file_top.name.endswith('.csv'):
+                    df_new_top = pd.read_csv(ume_file_top)
+                else:
+                    df_new_top = pd.read_excel(ume_file_top)
+                    
+                if 'Occurrence Time' in df_new_top.columns:
+                    df_new_top['Occurrence Time'] = df_new_top['Occurrence Time'].astype(str)
+                
+                # Timpa data di Google Sheets ke worksheet=0 (All_Alarm)
+                conn.update(spreadsheet=MASTER_SHEET_URL, worksheet=0, data=df_new_top)
+                
+                st.cache_data.clear()
+                conn.reset() 
+                
+                st.success("✅ Data berhasil disimpan! Memuat ulang summary...")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Gagal update data: {e}")
+
+st.divider()
+
+# --- PROSES TARIK DATA DARI SHEETS ---
 with st.spinner('⏳ Sedang menyinkronkan data dari Google Sheets...'):
     try:
         # worksheet=1 artinya TAB KEDUA -> Data Site
@@ -108,43 +146,7 @@ with st.spinner('⏳ Sedang menyinkronkan data dari Google Sheets...'):
 if df_dapot is not None:
     if df_ume.empty or len(df_ume) == 0:
         st.warning("⚠️ **Database UME masih kosong atau belum ter-load di Google Sheets!**")
-        st.markdown("### 👇 Belum ada data? Upload file UME lo langsung di bawah ini:")
-        
-        col_btn1, col_btn2 = st.columns([1.5, 1])
-        with col_btn1:
-            st.info("💡 **Tips:** Kalau sudah upload tapi tampilan masih kosong, klik tombol **Refresh Data** di kanan untuk membersihkan cache.")
-        with col_btn2:
-            st.write("") # Spacer biar sejajar
-            if st.button("🔄 REFRESH / RELOAD DATA", use_container_width=True, type="primary"):
-                st.cache_data.clear()
-                conn.reset()
-                st.rerun()
-                
-        # --- UPLOADER CADANGAN DI TENGAH LAYAR (BIAR GAK DEPEND KE SIDEBAR) ---
-        st.divider()
-        ume_file_mid = st.file_uploader("📂 Pilih file UME (Excel/CSV) untuk diupload ke Google Sheets", type=['xlsx', 'csv'], key="uploader_tengah")
-        
-        if ume_file_mid:
-            with st.spinner("⏳ Menyimpan seluruh data ke Google Sheets..."):
-                try:
-                    if ume_file_mid.name.endswith('.csv'):
-                        df_new_mid = pd.read_csv(ume_file_mid)
-                    else:
-                        df_new_mid = pd.read_excel(ume_file_mid)
-                        
-                    if 'Occurrence Time' in df_new_mid.columns:
-                        df_new_mid['Occurrence Time'] = df_new_mid['Occurrence Time'].astype(str)
-                    
-                    # Timpa data di Google Sheets ke worksheet=0 (All_Alarm)
-                    conn.update(spreadsheet=MASTER_SHEET_URL, worksheet=0, data=df_new_mid)
-                    
-                    st.cache_data.clear()
-                    conn.reset() 
-                    
-                    st.success("✅ Data berhasil disimpan dari uploader tengah! Memuat ulang summary...")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Gagal update data: {e}")
+        st.info("💡 **Cara Update:** Klik menu **`⚙️ KLIK DI SINI UNTUK UPDATE / UPLOAD DATA UME TERBARU`** di bagian atas halaman ini untuk mengupload file Excel/CSV UME lo.")
     else:
         try:
             if 'Occurrence Time' in df_ume.columns:
