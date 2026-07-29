@@ -164,14 +164,19 @@ if df_dapot is not None:
                 except:
                     return str(text)
 
+            # Ekstraksi ID ganda dari ME ID DAN Site Name(Office) untuk akurasi maksimal
+            me_clean_list = set()
             if 'ME ID' in df_ume.columns:
-                df_ume['ME_CLEAN'] = df_ume['ME ID'].apply(clean_id)
-            elif 'Site Name(Office)' in df_ume.columns:
-                df_ume['ME_CLEAN'] = df_ume['Site Name(Office)'].apply(get_6digit_id)
-            else:
-                st.error("Kolom 'ME ID' atau 'Site Name(Office)' tidak ditemukan pada data alarm.")
-                st.stop()
-                
+                cleaned_me = df_ume['ME ID'].apply(clean_id)
+                me_clean_list.update(cleaned_me.dropna().unique())
+            if 'Site Name(Office)' in df_ume.columns:
+                cleaned_site_office = df_ume['Site Name(Office)'].apply(get_6digit_id)
+                me_clean_list.update(cleaned_site_office.dropna().unique())
+
+            # Simpan ke dataframe UME dengan kolom bantu pencocokan
+            df_ume['ME_CLEAN_1'] = df_ume['ME ID'].apply(clean_id) if 'ME ID' in df_ume.columns else ""
+            df_ume['ME_CLEAN_2'] = df_ume['Site Name(Office)'].apply(get_6digit_id) if 'Site Name(Office)' in df_ume.columns else ""
+
             if 'NE ID' in df_dapot.columns:
                 df_dapot['NE_CLEAN'] = df_dapot['NE ID'].apply(clean_id)
             elif 'Site_ID' in df_dapot.columns:
@@ -197,7 +202,21 @@ if df_dapot is not None:
             else:
                 df_ume['Alarm_Detail'] = "• Unknown Alarm"
             
-            all_alarm_dict = df_ume.groupby('ME_CLEAN')['Alarm_Detail'].apply(lambda x: "<br>".join(x)).to_dict()
+            # Gabungkan alarm berdasarkan kedua sisi ID/Name
+            all_alarm_dict = {}
+            for _, r in df_ume.iterrows():
+                val1 = str(r.get('ME_CLEAN_1', '')).strip()
+                val2 = str(r.get('ME_CLEAN_2', '')).strip()
+                detail = r.get('Alarm_Detail', '')
+                for v in [val1, val2]:
+                    if v and v.lower() != 'nan':
+                        if v not in all_alarm_dict:
+                            all_alarm_dict[v] = []
+                        all_alarm_dict[v].append(detail)
+            
+            # Ubah list alarm menjadi string HTML terstruktur
+            for k in all_alarm_dict:
+                all_alarm_dict[k] = "<br>".join(list(set(all_alarm_dict[k])))
 
             if 'Position' in df_ume.columns and 'Specific Problem' in df_ume.columns:
                 cond_power = (df_ume['Alarm Code Name'].str.contains('Input power-off', case=False, na=False)) & \
@@ -213,14 +232,30 @@ if df_dapot is not None:
             
             df_down = df_ume[cond_power | cond_link1 | cond_link2].copy()
             
+            min_occurrence = {}
             if 'Occurrence Time' in df_down.columns:
                 df_down['Occurrence_DT'] = pd.to_datetime(df_down['Occurrence Time'], errors='coerce')
-                min_occurrence = df_down.groupby('ME_CLEAN')['Occurrence_DT'].min()
-            else:
-                min_occurrence = pd.Series(dtype='datetime64[ns]')
+                for _, r in df_down.iterrows():
+                    dt = r['Occurrence_DT']
+                    if pd.notnull(dt):
+                        for v in [str(r.get('ME_CLEAN_1', '')).strip(), str(r.get('ME_CLEAN_2', '')).strip()]:
+                            if v and v.lower() != 'nan':
+                                if v not in min_occurrence or dt < min_occurrence[v]:
+                                    min_occurrence[v] = dt
 
-            site_down_list = df_down['ME_CLEAN'].dropna().unique()
-            df_dapot['Status'] = df_dapot['NE_CLEAN'].apply(lambda x: 'Down' if x in site_down_list else 'Up')
+            # Cek status Down berdasarkan kecocokan di ME ID atau Site Name(Office)
+            def check_status(row):
+                ne = str(row['NE_CLEAN']).strip()
+                site_id_raw = str(row.get('Site_ID', '')).strip()
+                site_name_raw = str(row.get('Site_Name', '')).strip()
+                
+                candidates = [ne, get_6digit_id(site_id_raw), get_6digit_id(site_name_raw)]
+                for c in candidates:
+                    if c in me_clean_list:
+                        return 'Down'
+                return 'Up'
+
+            df_dapot['Status'] = df_dapot.apply(check_status, axis=1)
 
             df_up_all = df_dapot[(df_dapot['Status'] == 'Up') & df_dapot['LAT'].notna() & df_dapot['LONG'].notna()]
             suggestion_site_ids = {}
@@ -387,9 +422,20 @@ if df_dapot is not None:
                                     color_hex = '#00802b'
                                     status_label = '<b style="color:green;">Up</b>'
 
-                            alarms_terkait = all_alarm_dict.get(ne_id, "<i style='color:gray;'>Tidak ada alarm aktif</i>")
-                            start_dt = min_occurrence.get(ne_id) if status == 'Down' else None
-                            durasi_str = f" (Durasi: {format_durasi(start_dt)})" if status == 'Down' else ""
+                            # Ambil detail alarm berdasarkan pencarian ganda ID
+                            alarms_terkait = "<i style='color:gray;'>Tidak ada alarm aktif</i>"
+                            for key_candidate in [ne_id, get_6digit_id(site_id), get_6digit_id(site_name)]:
+                                if key_candidate in all_alarm_dict:
+                                    alarms_terkait = all_alarm_dict[key_candidate]
+                                    break
+
+                            start_dt = None
+                            for key_candidate in [ne_id, get_6digit_id(site_id), get_6digit_id(site_name)]:
+                                if key_candidate in min_occurrence:
+                                    start_dt = min_occurrence[key_candidate]
+                                    break
+
+                            durasi_str = f" (Durasi: {format_durasi(start_dt)})" if (status == 'Down' and start_dt) else ""
 
                             html_detail = f"""
                             <div style="width: 270px; font-size:12px; color:black; white-space: normal; line-height: 1.4;">
@@ -442,7 +488,15 @@ if df_dapot is not None:
                 df_dapot_down = df_dapot_down[df_dapot_down[filter_col] == filter_val]
             
             if not df_dapot_down.empty:
-                df_dapot_down['Occurrence_Time'] = df_dapot_down['NE_CLEAN'].map(min_occurrence)
+                # Mapping durasi menggunakan pengecekan multi-kandidat ID
+                def get_down_time(row):
+                    candidates = [str(row['NE_CLEAN']).strip(), get_6digit_id(row.get('Site_ID', '')), get_6digit_id(row.get('Site_Name', ''))]
+                    for c in candidates:
+                        if c in min_occurrence:
+                            return min_occurrence[c]
+                    return pd.NaT
+
+                df_dapot_down['Occurrence_Time'] = df_dapot_down.apply(get_down_time, axis=1)
                 df_dapot_down = df_dapot_down.sort_values(by='Occurrence_Time', ascending=True, na_position='last')
                 df_dapot_down['Durasi Down'] = df_dapot_down['Occurrence_Time'].apply(format_durasi)
                 
