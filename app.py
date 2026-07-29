@@ -21,13 +21,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 2. KONFIGURASI MASTER SPREADSHEET URL ---
-# Link otomatis gue masukin sesuai yang lo kasih
+# Pastikan URL polosan cuma sampai ID spreadsheet (tanpa /edit atau gid=...)
 MASTER_SHEET_URL = "https://docs.google.com/spreadsheets/d/11pp1YavJsR6wnYcvs0Z6B94KM75clu7FQgRy7sdEQ4g"
 
-# Buka koneksi ke GSheets
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-# --- 3. FUNGSI JARAK (HAVERSINE) ---
+# --- 3. FUNGSI UTILITIES & KALKULASI ---
 def get_nearest_up_sites(lat, lon, df_up, k=2):
     if pd.isna(lat) or pd.isna(lon) or df_up.empty:
         return [], []
@@ -45,14 +42,17 @@ def get_nearest_up_sites(lat, lon, df_up, k=2):
     closest = df_up.loc[closest_idx]
     return closest['Site_ID'].tolist(), closest['NE_CLEAN'].tolist()
 
-# --- 4. SIDEBAR UNTUK UPLOAD & UPDATE DATA ---
+# Buka koneksi ke GSheets pakai credential rahasia di Streamlit Secrets
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+# --- 4. SIDEBAR UNTUK UPLOAD & UPDATE DATA KE GSHEETS ---
 with st.sidebar:
     st.header("⚙️ Update Data UME")
-    st.markdown("Upload file UME terbaru di sini. Data akan disimpan utuh ke Google Sheets pada tab **All_Alarm**.")
+    st.markdown("Upload file UME terbaru di sini. **Semua kolom** akan disimpan utuh ke tab **All_Alarm**.")
     ume_file = st.file_uploader("Pilih file UME (Excel/CSV)", type=['xlsx', 'csv'])
     
     if ume_file:
-        with st.spinner("⏳ Menyimpan seluruh data ke tab All_Alarm..."):
+        with st.spinner("⏳ Menyimpan seluruh data ke Google Sheets..."):
             try:
                 if ume_file.name.endswith('.csv'):
                     df_new = pd.read_csv(ume_file)
@@ -62,35 +62,51 @@ with st.sidebar:
                 if 'Occurrence Time' in df_new.columns:
                     df_new['Occurrence Time'] = df_new['Occurrence Time'].astype(str)
                 
-                conn.update(spreadsheet=MASTER_SHEET_URL, worksheet="All_Alarm", data=df_new)
-                st.success("✅ Data berhasil disimpan utuh ke Google Sheets!")
-                st.cache_data.clear() 
+                # Timpa data di Google Sheets ke worksheet=0 (All_Alarm)
+                conn.update(spreadsheet=MASTER_SHEET_URL, worksheet=0, data=df_new)
+                
+                # --- BERSIHKAN SEMUA CACHE & KONEKSI BIAR GA HANG ---
+                st.cache_data.clear()
+                conn.reset() 
+                
+                st.success("✅ Data berhasil disimpan! Memuat ulang summary...")
                 st.rerun()
             except Exception as e:
                 st.error(f"Gagal update data: {e}")
 
-# --- 5. HEADER & LOAD DATA DARI KEDUA TAB ---
+# --- 5. HEADER & LOAD DATA DARI GOOGLE SHEETS ---
 st.title("🗺️ Site Down Monitoring")
 st.markdown("Monitoring status Site (Up/Down) berdasarkan alarm UME.")
 
 with st.spinner('⏳ Sedang menyinkronkan data dari Google Sheets...'):
     try:
-        # FIX ERROR SPASI: Pakai GID angka (432343053) pengganti nama "Data Site"
-        df_dapot = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet=432343053, ttl=600)
+        # worksheet=1 artinya TAB KEDUA -> Data Site
+        df_dapot = conn.read(
+            spreadsheet=MASTER_SHEET_URL, 
+            worksheet=1, 
+            sql="SELECT *",
+            ttl=300
+        )
     except Exception as e:
         st.error(f"Gagal menarik tab Data Site: {e}")
         df_dapot = None
         
     try:
-        # Nama "All_Alarm" nggak ada spasinya, jadi aman pakai string
-        df_ume = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet="All_Alarm", ttl=600)
+        # worksheet=0 artinya TAB PERTAMA (Paling Kiri) -> All_Alarm
+        df_ume = conn.read(
+            spreadsheet=MASTER_SHEET_URL, 
+            worksheet=0, 
+            sql="SELECT *",
+            ttl=300
+        )
     except Exception as e:
+        st.error(f"Gagal menarik tab All_Alarm: {e}")
         df_ume = pd.DataFrame()
 
 # --- 6. PROSES DATA DENGAN LOGIC DINAMIS ---
 if df_dapot is not None:
     if df_ume.empty or len(df_ume) == 0:
-        st.warning("⚠️ Database UME di tab 'All_Alarm' masih kosong. Silakan upload file terbaru melalui menu di sebelah kiri.")
+        st.warning("⚠️ Database UME masih kosong. Silakan upload file terbaru melalui menu di sebelah kiri.")
     else:
         try:
             if 'Occurrence Time' in df_ume.columns:
@@ -121,15 +137,15 @@ if df_dapot is not None:
             elif 'Site Name(Office)' in df_ume.columns:
                 df_ume['ME_CLEAN'] = df_ume['Site Name(Office)'].apply(get_6digit_id)
             else:
-                st.error("Kolom 'ME ID' atau 'Site Name(Office)' tidak ditemukan di tab All_Alarm!")
+                st.error("Kolom 'ME ID' atau 'Site Name(Office)' tidak ditemukan di database UME!")
                 st.stop()
                 
             if 'NE ID' in df_dapot.columns:
                 df_dapot['NE_CLEAN'] = df_dapot['NE ID'].apply(clean_id)
             elif 'Site_ID' in df_dapot.columns:
-                df_dapot['NE_CLEAN'] = df_dapot['Site_ID'].apply(clean_id)
+                df_dapot['NE_CLEAN'] = df_dapot['Site_ID'].apply(get_6digit_id)
             else:
-                st.error("Kolom 'NE ID' atau 'Site_ID' tidak ditemukan di tab Data Site!")
+                st.error("Kolom ID valid tidak ditemukan di Dapot!")
                 st.stop()
 
             if 'LAT' in df_dapot.columns and 'LONG' in df_dapot.columns:
@@ -358,7 +374,7 @@ if df_dapot is not None:
                         st.warning("Tidak ada data site (Up/Down) di area yang dipilih.")
 
             # ==========================================
-            # LAYOUT BAWAH: TABEL DETAIL SITE
+            # LAYOUT BAWAH: TABEL DETAIL SITE DOWN
             # ==========================================
             st.divider()
             st.subheader("📋 Detail Site Down")
@@ -401,4 +417,5 @@ if df_dapot is not None:
                 st.info("🎉 Keren! Tidak ada site yang Down saat ini.")
                     
         except Exception as e:
-            st.error(f"Terdapat kesalahan saat memproses data UME: {e}")
+            st.error(f"🚨 Terjadi kesalahan saat memproses kalkulasi summary: {e}")
+            st.exception(e)
