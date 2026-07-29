@@ -21,6 +21,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 2. KONFIGURASI MASTER SPREADSHEET URL ---
+# Link otomatis gue masukin sesuai yang lo kasih
 MASTER_SHEET_URL = "https://docs.google.com/spreadsheets/d/11pp1YavJsR6wnYcvs0Z6B94KM75clu7FQgRy7sdEQ4g"
 
 # Buka koneksi ke GSheets
@@ -44,7 +45,7 @@ def get_nearest_up_sites(lat, lon, df_up, k=2):
     closest = df_up.loc[closest_idx]
     return closest['Site_ID'].tolist(), closest['NE_CLEAN'].tolist()
 
-# --- 4. SIDEBAR UNTUK UPLOAD & UPDATE DATA (ALL COLUMNS) ---
+# --- 4. SIDEBAR UNTUK UPLOAD & UPDATE DATA ---
 with st.sidebar:
     st.header("⚙️ Update Data UME")
     st.markdown("Upload file UME terbaru di sini. Data akan disimpan utuh ke Google Sheets pada tab **All_Alarm**.")
@@ -53,7 +54,6 @@ with st.sidebar:
     if ume_file:
         with st.spinner("⏳ Menyimpan seluruh data ke tab All_Alarm..."):
             try:
-                # Baca semua kolom apa adanya
                 if ume_file.name.endswith('.csv'):
                     df_new = pd.read_csv(ume_file)
                 else:
@@ -62,10 +62,9 @@ with st.sidebar:
                 if 'Occurrence Time' in df_new.columns:
                     df_new['Occurrence Time'] = df_new['Occurrence Time'].astype(str)
                 
-                # Timpa data di tab All_Alarm dengan dataframe utuh yang baru
                 conn.update(spreadsheet=MASTER_SHEET_URL, worksheet="All_Alarm", data=df_new)
                 st.success("✅ Data berhasil disimpan utuh ke Google Sheets!")
-                st.cache_data.clear() # Bersihin cache biar layar auto-update
+                st.cache_data.clear() 
                 st.rerun()
             except Exception as e:
                 st.error(f"Gagal update data: {e}")
@@ -76,14 +75,14 @@ st.markdown("Monitoring status Site (Up/Down) berdasarkan alarm UME.")
 
 with st.spinner('⏳ Sedang menyinkronkan data dari Google Sheets...'):
     try:
-        # Tarik tab Data Site
-        df_dapot = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet="Data Site", ttl=600)
+        # FIX ERROR SPASI: Pakai GID angka (432343053) pengganti nama "Data Site"
+        df_dapot = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet=432343053, ttl=600)
     except Exception as e:
         st.error(f"Gagal menarik tab Data Site: {e}")
         df_dapot = None
         
     try:
-        # Tarik tab All_Alarm
+        # Nama "All_Alarm" nggak ada spasinya, jadi aman pakai string
         df_ume = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet="All_Alarm", ttl=600)
     except Exception as e:
         df_ume = pd.DataFrame()
@@ -102,7 +101,6 @@ if df_dapot is not None:
                 
             st.info(f"🕒 **Data Update Terakhir (Berdasarkan Alarm):** {last_update_str}")
             
-            # === LOGIC DINAMIS PENCARIAN ID ===
             def clean_id(text):
                 val = str(text).strip()
                 return val[:-2] if val.endswith('.0') else val
@@ -118,7 +116,6 @@ if df_dapot is not None:
                 except:
                     return str(text)
 
-            # Cek kolom ID yang tersedia di UME
             if 'ME ID' in df_ume.columns:
                 df_ume['ME_CLEAN'] = df_ume['ME ID'].apply(clean_id)
             elif 'Site Name(Office)' in df_ume.columns:
@@ -127,7 +124,6 @@ if df_dapot is not None:
                 st.error("Kolom 'ME ID' atau 'Site Name(Office)' tidak ditemukan di tab All_Alarm!")
                 st.stop()
                 
-            # Cek kolom ID yang tersedia di Dapot
             if 'NE ID' in df_dapot.columns:
                 df_dapot['NE_CLEAN'] = df_dapot['NE ID'].apply(clean_id)
             elif 'Site_ID' in df_dapot.columns:
@@ -136,7 +132,6 @@ if df_dapot is not None:
                 st.error("Kolom 'NE ID' atau 'Site_ID' tidak ditemukan di tab Data Site!")
                 st.stop()
 
-            # Bersihkan Koordinat
             if 'LAT' in df_dapot.columns and 'LONG' in df_dapot.columns:
                 df_dapot['LAT'] = df_dapot['LAT'].astype(str).str.replace(',', '.').astype(float)
                 df_dapot['LONG'] = df_dapot['LONG'].astype(str).str.replace(',', '.').astype(float)
@@ -147,7 +142,6 @@ if df_dapot is not None:
             if 'Hub site' in df_dapot.columns:
                 df_dapot['Hub site'] = df_dapot['Hub site'].fillna('Non Hub')
 
-            # Ekstrak Alarm Detail
             if 'Occurrence Time' in df_ume.columns and 'Alarm Code Name' in df_ume.columns:
                 df_ume['Alarm_Detail'] = "• " + df_ume['Alarm Code Name'].astype(str) + " (" + df_ume['Occurrence Time'].astype(str) + ")"
             elif 'Alarm Code Name' in df_ume.columns:
@@ -157,8 +151,6 @@ if df_dapot is not None:
             
             all_alarm_dict = df_ume.groupby('ME_CLEAN')['Alarm_Detail'].apply(lambda x: "<br>".join(x)).to_dict()
 
-            # === LOGIC DINAMIS PENENTUAN DOWN ===
-            # Kalau kolom lengkap (dari file fm-active utuh), pakai rule strict
             if 'Position' in df_ume.columns and 'Specific Problem' in df_ume.columns:
                 cond_power = (df_ume['Alarm Code Name'].str.contains('Input power-off', case=False, na=False)) & \
                              (df_ume['Position'].astype(str).str.strip() == 'Equipment=1')
@@ -166,7 +158,6 @@ if df_dapot is not None:
                              (df_ume['Alarm Code Name'].str.contains('The link between the server and the ME is broken', case=False, na=False))
                 cond_link2 = (df_ume['Specific Problem'].str.contains('Site Abis control link broken', case=False, na=False)) | \
                              (df_ume['Alarm Code Name'].str.contains('Site Abis control link broken', case=False, na=False))
-            # Kalau kolom minim (dari broadcast), pakai rule simple
             else:
                 cond_power = df_ume['Alarm Code Name'].str.contains('Input power-off', case=False, na=False)
                 cond_link1 = df_ume['Alarm Code Name'].str.contains('The link between the server and the ME is broken', case=False, na=False)
