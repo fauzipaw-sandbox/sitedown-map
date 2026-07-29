@@ -66,6 +66,16 @@ if df_dapot is not None and ume_file:
         with st.spinner('⏳ Memproses data UME dan mengkalkulasi area...'):
             df_ume = pd.read_excel(ume_file)
             
+            # --- GET DATA UPDATE TERAKHIR ---
+            if 'Occurrence Time' in df_ume.columns:
+                latest_time = pd.to_datetime(df_ume['Occurrence Time'], errors='coerce').max()
+                last_update_str = latest_time.strftime("%d-%m-%Y %H:%M:%S") if pd.notnull(latest_time) else "Tidak diketahui"
+            else:
+                last_update_str = "Tidak diketahui"
+                
+            # Menampilkan info update di atas dashboard
+            st.info(f"🕒 **Data Update Terakhir (Berdasarkan Alarm):** {last_update_str}")
+            
             def clean_id(text):
                 val = str(text).strip()
                 return val[:-2] if val.endswith('.0') else val
@@ -156,7 +166,6 @@ if df_dapot is not None and ume_file:
             
             # --- KOLOM KIRI (SUMMARY TABEL) ---
             with col_stats:
-                # Modifikasi lebar kolom title dan toggle
                 col_stat_text, col_stat_toggle1, col_stat_toggle2 = st.columns([2, 1, 1])
                 col_stat_text.subheader("📊 Summary")
                 show_labels = col_stat_toggle1.toggle("Show Site ID", value=False)
@@ -215,7 +224,6 @@ if df_dapot is not None and ume_file:
                             control=True
                         ).add_to(m)
                         
-                        # --- HTML LEGEND UPDATE (Force Black Text & Hub Site Star) ---
                         if show_legend:
                             legend_html = '''
                             <div style="position: fixed; 
@@ -260,8 +268,10 @@ if df_dapot is not None and ume_file:
                             start_dt = min_occurrence.get(ne_id) if status == 'Down' else None
                             durasi_str = f" (Durasi: {format_durasi(start_dt)})" if status == 'Down' else ""
                             
-                            popup_html = f"""
-                            <div style="min-width: 250px; font-size:12px; color:black;">
+                            # --- UBAH MENJADI HTML TOOLTIP (Hover) ---
+                            # Menambahkan white-space: normal agar pop up tooltip tidak kepanjangan kesamping
+                            html_detail = f"""
+                            <div style="width: 250px; font-size:12px; color:black; white-space: normal; line-height: 1.4;">
                                 <b style="font-size:14px;">{site_name}</b> <br>
                                 Site ID: <b>{site_id}</b><br>
                                 Status: {status_label}{durasi_str}<br>
@@ -275,8 +285,6 @@ if df_dapot is not None and ume_file:
                             </div>
                             """
                             
-                            tooltip_text = f"{site_name} ({site_id})"
-                            
                             if is_hub:
                                 shape_html = f'<div style="color:{color_hex}; font-size:18px; margin-top:-4px; margin-left:-2px; text-shadow: -1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF, 0px 0px 4px rgba(0,0,0,0.6);">★</div>'
                             else:
@@ -289,11 +297,11 @@ if df_dapot is not None and ume_file:
                                 
                             combined_html = f'<div style="position:relative; width:12px; height:12px; cursor:pointer;">{shape_html}{label_html}</div>'
 
+                            # Ganti Popup dengan Tooltip agar otomatis muncul pas di-hover
                             folium.Marker(
                                 location=[lat, lon],
                                 icon=folium.DivIcon(html=combined_html, icon_size=(12, 12), icon_anchor=(6, 6)),
-                                popup=folium.Popup(popup_html, max_width=400),
-                                tooltip=tooltip_text
+                                tooltip=folium.Tooltip(html_detail)
                             ).add_to(m)
                         
                         folium.LayerControl(position='topright').add_to(m)
