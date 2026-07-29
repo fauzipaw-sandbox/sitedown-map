@@ -184,7 +184,7 @@ if df_dapot is not None:
                 df_dapot['LAT'] = df_dapot['LAT'].astype(str).str.replace(',', '.').astype(float)
                 df_dapot['LONG'] = df_dapot['LONG'].astype(str).str.replace(',', '.').astype(float)
 
-            for col in ['Kota/Kab', 'Kecamatan']:
+            for col in ['Kota/Kab', 'Kecamatan', 'NOP']:
                 if col in df_dapot.columns:
                     df_dapot[col] = df_dapot[col].apply(lambda x: str(x).title() if pd.notnull(x) else x)
             if 'Hub site' in df_dapot.columns:
@@ -259,8 +259,9 @@ if df_dapot is not None:
 
             col_stats, col_map = st.columns([1.5, 2.5]) 
             
-            filter_col = None
-            filter_val = None
+            # Default filter di-set ke NOP Palangkaraya agar tidak berat
+            filter_col = 'NOP'
+            filter_val = 'Palangkaraya'
             
             with col_stats:
                 col_stat_text, col_stat_toggle1, col_stat_toggle2 = st.columns([2, 1, 1])
@@ -275,23 +276,33 @@ if df_dapot is not None:
                 c1.success(f"✅ **Up:** {up_count}")
                 c2.error(f"🚨 **Down:** {down_count}")
                 
-                tab1, tab2, tab3 = st.tabs(["Kabupaten", "Kecamatan", "Hub/Non Hubsite"])
+                tab1, tab2, tab3, tab4 = st.tabs(["NOP", "Kabupaten", "Kecamatan", "Hub/Non Hubsite"])
                 
                 with tab1:
+                    nop_df = get_summary_table('NOP')
+                    event_nop = st.dataframe(nop_df, height=300, use_container_width=True, on_select="rerun", selection_mode="single-row")
+                    if len(event_nop.selection.rows) > 0:
+                        filter_col = 'NOP'
+                        filter_val = nop_df.index[event_nop.selection.rows[0]]
+                    else:
+                        filter_col = 'NOP'
+                        filter_val = 'Palangkaraya'
+                        
+                with tab2:
                     kab_df = get_summary_table('Kota/Kab')
                     event_kab = st.dataframe(kab_df, height=300, use_container_width=True, on_select="rerun", selection_mode="single-row")
                     if len(event_kab.selection.rows) > 0:
                         filter_col = 'Kota/Kab'
                         filter_val = kab_df.index[event_kab.selection.rows[0]]
                         
-                with tab2:
+                with tab3:
                     kec_df = get_summary_table('Kecamatan')
                     event_kec = st.dataframe(kec_df, height=300, use_container_width=True, on_select="rerun", selection_mode="single-row")
                     if len(event_kec.selection.rows) > 0:
                         filter_col = 'Kecamatan'
                         filter_val = kec_df.index[event_kec.selection.rows[0]]
                         
-                with tab3:
+                with tab4:
                     hub_df = get_summary_table('Hub site')
                     event_hub = st.dataframe(hub_df, height=300, use_container_width=True, on_select="rerun", selection_mode="single-row")
                     if len(event_hub.selection.rows) > 0:
@@ -349,7 +360,6 @@ if df_dapot is not None:
                             hub_status = 'Non Hub' if not hub_val or hub_val.lower() == 'nan' else hub_val
                             is_hub = 'hub' in hub_status.lower() and 'non' not in hub_status.lower()
                             
-                            # Pencarian kolom data jaringan
                             col_transport = find_col(df_dapot, ['Transport Type', 'Transport', 'Transport_Type'])
                             col_simpul = find_col(df_dapot, ['Simpul 4G/Hub Simpul', 'Simpul 4G', 'Hub Simpul'])
                             col_jml_anakan = find_col(df_dapot, ['JUMLAH SITE ANAKAN', 'Jumlah anakan', 'Jumlah Anakan', 'Jml Anakan'])
@@ -358,7 +368,6 @@ if df_dapot is not None:
                             transport_type = row[col_transport] if col_transport and pd.notnull(row[col_transport]) else '-'
                             simpul_4g = row[col_simpul] if col_simpul and pd.notnull(row[col_simpul]) else '-'
                             
-                            # Konversi jumlah anakan menjadi integer murni (tanpa .0)
                             raw_jml_anakan = row[col_jml_anakan] if col_jml_anakan and pd.notnull(row[col_jml_anakan]) else 0
                             try:
                                 jumlah_anakan = int(float(raw_jml_anakan))
