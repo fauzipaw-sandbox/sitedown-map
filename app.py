@@ -45,7 +45,7 @@ def get_nearest_up_sites(lat, lon, df_up, k=2):
         dlat = lat2 - lat1
         dlon = lon2 - lon1
         a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
-        a = max(0.0, min(1.0, a)) # Proteksi math domain error
+        a = max(0.0, min(1.0, a))
         c = 2 * math.asin(math.sqrt(a))
         return 6371 * c
     
@@ -189,16 +189,17 @@ if df_dapot is not None:
             cond_link2 = pd.Series(False, index=df_ume.index)
             
             if 'Alarm Code Name' in df_ume.columns:
-                cond_power = df_ume['Alarm Code Name'].str.contains('Input power-off', case=False, na=False)
+                # Menggunakan astype(str) agar terhindar dari masalah tipe data Float/NaN
+                cond_power = df_ume['Alarm Code Name'].astype(str).str.contains('Input power-off', case=False, na=False)
                 if 'Position' in df_ume.columns:
                     cond_power = cond_power & (df_ume['Position'].astype(str).str.strip() == 'Equipment=1')
                     
-                cond_link1 = df_ume['Alarm Code Name'].str.contains('The link between the server and the ME is broken', case=False, na=False)
-                cond_link2 = df_ume['Alarm Code Name'].str.contains('Site Abis control link broken', case=False, na=False)
+                cond_link1 = df_ume['Alarm Code Name'].astype(str).str.contains('The link between the server and the ME is broken', case=False, na=False)
+                cond_link2 = df_ume['Alarm Code Name'].astype(str).str.contains('Site Abis control link broken', case=False, na=False)
                 
             if 'Specific Problem' in df_ume.columns:
-                cond_link1 = cond_link1 | df_ume['Specific Problem'].str.contains('The link between the server and the ME is broken', case=False, na=False)
-                cond_link2 = cond_link2 | df_ume['Specific Problem'].str.contains('Site Abis control link broken', case=False, na=False)
+                cond_link1 = cond_link1 | df_ume['Specific Problem'].astype(str).str.contains('The link between the server and the ME is broken', case=False, na=False)
+                cond_link2 = cond_link2 | df_ume['Specific Problem'].astype(str).str.contains('Site Abis control link broken', case=False, na=False)
 
             df_down = df_ume[cond_power | cond_link1 | cond_link2].copy()
             
@@ -240,7 +241,6 @@ if df_dapot is not None:
             if 'Hub site' in df_dapot.columns:
                 df_dapot['Hub site'] = df_dapot['Hub site'].fillna('Non Hub')
 
-            # Vektorisasi pengecekan status (bebas looping)
             df_dapot['C1'] = df_dapot['NE ID'].apply(clean_id) if 'NE ID' in df_dapot.columns else ""
             df_dapot['C2'] = df_dapot['Site_ID'].astype(str).apply(get_6digit_id) if 'Site_ID' in df_dapot.columns else ""
             df_dapot['C3'] = df_dapot['Site_Name'].astype(str).apply(get_6digit_id) if 'Site_Name' in df_dapot.columns else ""
@@ -307,7 +307,6 @@ if df_dapot is not None:
                 with tab4:
                     event_hub = st.dataframe(hub_df, height=300, use_container_width=True, on_select="rerun", selection_mode="single-row")
                     
-            # --- PENGUNCIAN DEFAULT FILTER (NOP PALANGKARAYA) ---
             filter_col = None
             filter_val = None
             
@@ -324,7 +323,6 @@ if df_dapot is not None:
                 filter_col = 'Hub site'
                 filter_val = hub_df.index[event_hub.selection.rows[0]]
             else:
-                # Mengunci Default secara ketat agar tidak load selindo
                 filter_col = 'NOP'
                 if not nop_df.empty:
                     match_pal = nop_df.index[nop_df.index.astype(str).str.contains('Palangka', case=False, na=False)]
@@ -343,7 +341,6 @@ if df_dapot is not None:
                 else:
                     st.write("") 
                 
-                # --- HITUNG JARAK TETANGGA HANYA PADA DATA YANG DITAMPILKAN ---
                 suggestion_site_ids = {}
                 suggested_up_ids = set()
                 df_up_all = df_dapot[(df_dapot['Status'] == 'Up') & df_dapot['LAT'].notna() & df_dapot['LONG'].notna()]
@@ -424,7 +421,6 @@ if df_dapot is not None:
                                     color_hex = '#00802b'
                                     status_label = '<b style="color:green;">Up</b>'
 
-                            # Eksekusi pencarian detail seluruh alarm
                             alarms_terkait = "<i style='color:gray;'>Tidak ada alarm aktif</i>"
                             for key_candidate in [row['C1'], row['C2'], row['C3']]:
                                 if key_candidate and key_candidate in all_alarm_dict:
@@ -492,7 +488,6 @@ if df_dapot is not None:
             st.divider()
             st.subheader("📋 Detail Site Down")
             
-            # Tabel bawah diambil langsung dari df_map yang sudah terfilter (lebih optimal)
             df_dapot_down = df_map[df_map['Status'] == 'Down'].copy()
             
             if not df_dapot_down.empty:
