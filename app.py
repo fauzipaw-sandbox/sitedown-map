@@ -53,6 +53,15 @@ def get_nearest_up_sites(lat, lon, df_up, k=2):
     closest = df_up.loc[closest_idx]
     return closest['Site_ID'].tolist(), closest['NE_CLEAN'].tolist()
 
+def find_col(df, possible_names):
+    """Fungsi pembantu untuk mencari nama kolom secara fleksibel (mengabaikan spasi dan kapitalisasi)"""
+    df_cols_clean = {c.strip().lower(): c for c in df.columns}
+    for name in possible_names:
+        clean_name = name.strip().lower()
+        if clean_name in df_cols_clean:
+            return df_cols_clean[clean_name]
+    return None
+
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- 5. HEADER & EXPANDER UPDATE UTAMA (DI ATAS LAYAR) ---
@@ -340,12 +349,16 @@ if df_dapot is not None:
                             hub_status = 'Non Hub' if not hub_val or hub_val.lower() == 'nan' else hub_val
                             is_hub = 'hub' in hub_status.lower() and 'non' not in hub_status.lower()
                             
-                            # Mengambil langsung dari kolom sheet Data Site sesuai permintaan
-                            transport_type = row.get('Transport Type', '-')
-                            link_route = row.get('Link Route', '')
-                            simpul_4g = row.get('Simpul 4G/Hub Simpul', row.get('Simpul 4G', '-'))
-                            jumlah_anakan = row.get('Jumlah anakan', 0)
-                            site_id_anakan = row.get('Site id anakan', '-')
+                            # Pencarian kolom secara fleksibel untuk data jaringan
+                            col_transport = find_col(df_dapot, ['Transport Type', 'Transport', 'Transport_Type'])
+                            col_simpul = find_col(df_dapot, ['Simpul 4G/Hub Simpul', 'Simpul 4G', 'Hub Simpul'])
+                            col_jml_anakan = find_col(df_dapot, ['Jumlah anakan', 'Jumlah Anakan', 'Jml Anakan'])
+                            col_id_anakan = find_col(df_dapot, ['Site id anakan', 'Site ID Anakan', 'ID Anakan'])
+                            
+                            transport_type = row[col_transport] if col_transport and pd.notnull(row[col_transport]) else '-'
+                            simpul_4g = row[col_simpul] if col_simpul and pd.notnull(row[col_simpul]) else '-'
+                            jumlah_anakan = row[col_jml_anakan] if col_jml_anakan and pd.notnull(row[col_jml_anakan]) else 0
+                            site_id_anakan = row[col_id_anakan] if col_id_anakan and pd.notnull(row[col_id_anakan]) else '-'
                             
                             if status == 'Down':
                                 color_hex = '#e60000'
@@ -361,13 +374,6 @@ if df_dapot is not None:
                             alarms_terkait = all_alarm_dict.get(ne_id, "<i style='color:gray;'>Tidak ada alarm aktif</i>")
                             start_dt = min_occurrence.get(ne_id) if status == 'Down' else None
                             durasi_str = f" (Durasi: {format_durasi(start_dt)})" if status == 'Down' else ""
-                            
-                            route_html_button = ""
-                            if pd.notnull(link_route) and str(link_route).strip() != "" and str(link_route).lower() != "nan":
-                                route_html_button = f'''
-                                <hr style="margin: 5px 0;">
-                                <a href="{link_route}" target="_blank" style="display:block; text-align:center; background:#1a73e8; color:white; padding:5px; text-decoration:none; border-radius:4px; font-weight:bold;">🔗 Buka Link Route</a>
-                                '''
 
                             html_detail = f"""
                             <div style="width: 270px; font-size:12px; color:black; white-space: normal; line-height: 1.4;">
@@ -385,7 +391,6 @@ if df_dapot is not None:
                                 <div style="font-size:10px; max-height:100px; overflow-y:auto; background-color:#f1f1f1; padding:5px; border-radius:4px;">
                                     {alarms_terkait}
                                 </div>
-                                {route_html_button}
                             </div>
                             """
                             
