@@ -92,7 +92,6 @@ with st.spinner('⏳ Sedang menyinkronkan data dengan sistem...'):
         st.error(f"Gagal menarik data alarm: {e}")
         df_ume = pd.DataFrame()
 
-# Tentukan waktu terakhir berdasarkan alarm
 if df_ume is not None and not df_ume.empty and 'Occurrence Time' in df_ume.columns:
     latest_time = pd.to_datetime(df_ume['Occurrence Time'], errors='coerce').max()
     last_update_str = latest_time.strftime("%d-%m-%Y %H:%M:%S") if pd.notnull(latest_time) else "Tidak diketahui"
@@ -220,7 +219,6 @@ if df_dapot is not None:
             if 'Hub site' in df_dapot.columns:
                 df_dapot['Hub site'] = df_dapot['Hub site'].fillna('Non Hub')
                 
-            # Identifikasi Site Class secara dinamis
             col_class = find_col(df_dapot, ['SITE CLASS', 'Site_Class', 'Site Class', 'Class'])
             df_dapot['Site Class'] = df_dapot[col_class].fillna('-') if col_class else '-'
 
@@ -262,24 +260,31 @@ if df_dapot is not None:
                 summary['% Up'] = (summary['Jumlah Up'] / summary['Total'] * 100).round(1).astype(str) + '%'
                 return summary.sort_values('Jumlah Down', ascending=False).set_index(col_name)[['Jumlah Down', 'Jumlah Up', '% Down', '% Up', 'Total']]
 
-            # --- LAYOUT DUA KOLOM UTAMA (Satu Viewport Tampilan) ---
+            # --- LAYOUT DUA KOLOM UTAMA ---
             col_stats, col_map = st.columns([1.5, 2.5]) 
             
             with col_stats:
-                st.subheader("📊 Filter & Ringkasan")
-                
                 list_nop = sorted([str(x) for x in df_dapot['NOP'].dropna().unique() if str(x).strip() != ''])
                 idx_pal = next((i for i, v in enumerate(list_nop) if 'palangka' in str(v).lower()), 0)
-                selected_nop = st.selectbox("📌 Pilih NOP (Filter Utama)", list_nop, index=idx_pal)
+                
+                # NOP Dropdown dan Toggles disejajarkan
+                c_nop, c_tog1, c_tog2 = st.columns([2.5, 1, 1])
+                with c_nop:
+                    selected_nop = st.selectbox("NOP", list_nop, index=idx_pal, label_visibility="collapsed")
+                with c_tog1:
+                    show_labels = st.toggle("ID Map", value=False)
+                with c_tog2:
+                    show_legend = st.toggle("Legenda", value=True)
                 
                 df_active = df_dapot[df_dapot['NOP'] == selected_nop].copy()
+                
+                st.write("") # Spasi tipis
                 
                 up_cnt, down_cnt = len(df_active[df_active['Status'] == 'Up']), len(df_active[df_active['Status'] == 'Down'])
                 c1, c2 = st.columns(2)
                 c1.success(f"✅ **Total Up:** {up_cnt}")
                 c2.error(f"🚨 **Total Down:** {down_cnt}")
                 
-                # Menambahkan Tab Site Class
                 tab1, tab2, tab3, tab4 = st.tabs(["Kabupaten", "Kecamatan", "Site Class", "Hub/Non Hub"])
                 
                 kab_df = get_summary_table(df_active, 'Kota/Kab')
@@ -287,15 +292,10 @@ if df_dapot is not None:
                 cls_df = get_summary_table(df_active, 'Site Class')
                 hub_df = get_summary_table(df_active, 'Hub site')
                 
-                # Tinggi di-set 250 agar ringkas dan map di sebelahnya terlihat rapi
                 with tab1: event_kab = st.dataframe(kab_df, height=250, use_container_width=True, on_select="rerun", selection_mode="single-row")
                 with tab2: event_kec = st.dataframe(kec_df, height=250, use_container_width=True, on_select="rerun", selection_mode="single-row")
                 with tab3: event_cls = st.dataframe(cls_df, height=250, use_container_width=True, on_select="rerun", selection_mode="single-row")
                 with tab4: event_hub = st.dataframe(hub_df, height=250, use_container_width=True, on_select="rerun", selection_mode="single-row")
-                
-                col_t_opt1, col_t_opt2 = st.columns(2)
-                show_labels = col_t_opt1.toggle("Tampilkan ID Map", value=False)
-                show_legend = col_t_opt2.toggle("Legenda Peta", value=True)
                     
             filter_col, filter_val = None, None
             
@@ -312,9 +312,9 @@ if df_dapot is not None:
                 df_map = df_active.copy()
                 if filter_col and filter_val:
                     df_map = df_map[df_map[filter_col] == filter_val]
-                    st.info(f"📍 Menampilkan Area **NOP {selected_nop}** - Filter: **{filter_col} ({filter_val})**")
+                    st.info(f"📍 Menampilkan Area **{selected_nop}** - Filter: **{filter_col} ({filter_val})**")
                 else:
-                    st.info(f"📍 Menampilkan Seluruh Area **NOP {selected_nop}**")
+                    st.info(f"📍 Menampilkan Seluruh Area **{selected_nop}**")
                 
                 suggestion_site_ids, suggested_up_ids = {}, set()
                 df_up_all = df_dapot[(df_dapot['Status'] == 'Up') & df_dapot['LAT'].notna() & df_dapot['LONG'].notna()]
@@ -456,3 +456,6 @@ if df_dapot is not None:
         except Exception as e:
             st.error(f"🚨 Terjadi kesalahan saat memproses data: {e}")
             st.exception(e)
+
+# --- FOOTER CUSTOME ---
+st.markdown("<hr style='margin-top: 3rem; margin-bottom: 1rem;'/><p style='text-align: center; color: #888; font-size: 14px;'>© 2026 | Created with ❤️ by Fauzi Ramdani - 97122</p>", unsafe_allow_html=True)
