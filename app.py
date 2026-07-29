@@ -181,10 +181,6 @@ if df_dapot is not None:
             if 'Hub site' in df_dapot.columns:
                 df_dapot['Hub site'] = df_dapot['Hub site'].fillna('Non Hub')
 
-            child_counts = {}
-            if 'Parent_Site' in df_dapot.columns:
-                child_counts = df_dapot['Parent_Site'].value_counts().to_dict()
-
             if 'Occurrence Time' in df_ume.columns and 'Alarm Code Name' in df_ume.columns:
                 df_ume['Alarm_Detail'] = "• " + df_ume['Alarm Code Name'].astype(str) + " (" + df_ume['Occurrence Time'].astype(str) + ")"
             elif 'Alarm Code Name' in df_ume.columns:
@@ -344,9 +340,12 @@ if df_dapot is not None:
                             hub_status = 'Non Hub' if not hub_val or hub_val.lower() == 'nan' else hub_val
                             is_hub = 'hub' in hub_status.lower() and 'non' not in hub_status.lower()
                             
-                            parent_site = row.get('Parent_Site', row.get('Hub site', '-'))
-                            child_count = child_counts.get(site_id, row.get('Child_Count', 0))
-                            route_link = row.get('Route', row.get('Link_Route', ''))
+                            # Mengambil langsung dari kolom sheet Data Site sesuai permintaan
+                            transport_type = row.get('Transport Type', '-')
+                            link_route = row.get('Link Route', '')
+                            simpul_4g = row.get('Simpul 4G/Hub Simpul', row.get('Simpul 4G', '-'))
+                            jumlah_anakan = row.get('Jumlah anakan', 0)
+                            site_id_anakan = row.get('Site id anakan', '-')
                             
                             if status == 'Down':
                                 color_hex = '#e60000'
@@ -364,21 +363,23 @@ if df_dapot is not None:
                             durasi_str = f" (Durasi: {format_durasi(start_dt)})" if status == 'Down' else ""
                             
                             route_html_button = ""
-                            if pd.notnull(route_link) and str(route_link).strip() != "" and str(route_link).lower() != "nan":
+                            if pd.notnull(link_route) and str(link_route).strip() != "" and str(link_route).lower() != "nan":
                                 route_html_button = f'''
                                 <hr style="margin: 5px 0;">
-                                <a href="{route_link}" target="_blank" style="display:block; text-align:center; background:#1a73e8; color:white; padding:5px; text-decoration:none; border-radius:4px; font-weight:bold;">🔗 Buka Link Route</a>
+                                <a href="{link_route}" target="_blank" style="display:block; text-align:center; background:#1a73e8; color:white; padding:5px; text-decoration:none; border-radius:4px; font-weight:bold;">🔗 Buka Link Route</a>
                                 '''
 
                             html_detail = f"""
-                            <div style="width: 260px; font-size:12px; color:black; white-space: normal; line-height: 1.4;">
+                            <div style="width: 270px; font-size:12px; color:black; white-space: normal; line-height: 1.4;">
                                 <b style="font-size:14px;">{site_name}</b> <br>
                                 Site ID: <b>{site_id}</b><br>
                                 Status: {status_label}{durasi_str}<br>
                                 <b>Class:</b> {site_class} | <b>Tipe:</b> {hub_status}<br>
                                 <b>Power:</b> {power_type} | <b>Grid:</b> {grid_type}<br>
-                                <b>Site Simpul (Induk):</b> {parent_site}<br>
-                                <b>Jumlah Anakan:</b> {child_count} site
+                                <b>Transport Type:</b> {transport_type}<br>
+                                <b>Simpul 4G / Hub Simpul:</b> {simpul_4g}<br>
+                                <b>Jumlah Anakan:</b> {jumlah_anakan} site<br>
+                                <b>Site ID Anakan:</b> {site_id_anakan}
                                 <hr style="margin: 5px 0;">
                                 <b style="font-size:11px;">Daftar Alarm Terdeteksi:</b><br>
                                 <div style="font-size:10px; max-height:100px; overflow-y:auto; background-color:#f1f1f1; padding:5px; border-radius:4px;">
