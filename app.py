@@ -7,7 +7,7 @@ import math
 from streamlit_gsheets import GSheetsConnection
 
 # --- 1. KONFIGURASI LAYOUT ---
-st.set_page_config(page_title="Site Down Monitoring", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Site Down Monitoring Kalimantan (ZTE Only)", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
     <style>
@@ -102,12 +102,17 @@ else:
 col_title, col_header_right = st.columns([2.5, 1])
 
 with col_title:
-    st.title("🗺️ Site Down Monitoring")
+    st.title("🗺️ Site Down Monitoring Kalimantan (ZTE Only)")
 
 with col_header_right:
     st.markdown(f"<div class='update-info'>Pembaruan Data Terakhir:<br><b style='color:#1a73e8;'>{last_update_str}</b></div>", unsafe_allow_html=True)
     with st.popover("⚙️ KLIK DI SINI UNTUK UPDATE DATA", use_container_width=True):
-        st.markdown("Unggah file data alarm terbaru (Kolom disesuaikan otomatis).")
+        st.markdown("""
+        **Cara Update Data Alarm:**
+        1. Login ke UME ZTE ([klik di sini](https://10.40.48.9:28001/uportal/framework/default.html#/home))
+        2. Pilih menu **Alarm Management > Active Alarm > Alarm Monitor > Klik Export > Export All**
+        3. Drag n Drop isi filenya di sini, dan tunggu beberapa saat
+        """)
         ume_file_top = st.file_uploader("Pilih file (Excel/CSV)", type=['xlsx', 'csv'], label_visibility="collapsed")
         
         if st.button("🔄 Reload Data / Clear Cache", use_container_width=True, type="primary"):
@@ -425,7 +430,7 @@ if df_dapot is not None:
 
             # --- BAGIAN BAWAH SCROLL ---
             st.divider()
-            st.subheader("📋 Rincian Lengkap Site Down")
+            st.subheader("📋 Detail Site Down")
             
             df_dapot_down = df_map[df_map['Status'] == 'Down'].copy()
             if not df_dapot_down.empty:
@@ -457,5 +462,5 @@ if df_dapot is not None:
             st.error(f"🚨 Terjadi kesalahan saat memproses data: {e}")
             st.exception(e)
 
-# --- FOOTER CUSTOME ---
+# --- FOOTER CUSTOM ---
 st.markdown("<hr style='margin-top: 3rem; margin-bottom: 1rem;'/><p style='text-align: center; color: #888; font-size: 14px;'>© 2026 | Created with ❤️ by Fauzi Ramdani - 97122</p>", unsafe_allow_html=True)
