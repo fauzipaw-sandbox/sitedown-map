@@ -320,7 +320,8 @@ if df_dapot is not None:
                 
                 for idx, row in df_map[df_map['Status'] == 'Down'].iterrows():
                     site_ids, ne_cleans = get_nearest_up_sites(row['LAT'], row['LONG'], df_up_all, k=2)
-                    suggestion_site_ids[row['NE_CLEAN']] = site_ids if site_ids else ["-"]
+                    # Menggunakan idx dataframe agar tidak tertimpa jika NE_CLEAN kosong/sama
+                    suggestion_site_ids[idx] = site_ids if site_ids else ["-"]
                     for ne in ne_cleans:
                         val = str(ne).strip()
                         if val and val.lower() not in ['nan', 'none', 'unknown', '']:
@@ -333,10 +334,19 @@ if df_dapot is not None:
                         m = folium.Map(location=[df_map['LAT'].mean(), df_map['LONG'].mean()], zoom_start=10)
                         folium.TileLayer(tiles='https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', attr='Google', name='Google Satellite').add_to(m)
                         
-                        # --- PERBAIKAN LEGENDA (KOMPAK, TRANSPARAN & TULISAN LEGEND) ---
+                        if filter_col in ['Kota/Kab', 'Kecamatan'] and filter_val:
+                            min_lat, max_lat = df_map['LAT'].min(), df_map['LAT'].max()
+                            min_lon, max_lon = df_map['LONG'].min(), df_map['LONG'].max()
+                            
+                            if min_lat == max_lat: min_lat -= 0.02; max_lat += 0.02
+                            if min_lon == max_lon: min_lon -= 0.02; max_lon += 0.02
+                            
+                            bounds = [[min_lat, min_lon], [max_lat, max_lon]]
+                            m.fit_bounds(bounds)
+
                         if show_legend:
                             legend_html = '''
-                            <div style="position: fixed; bottom: 20px; left: 20px; width: auto; height: auto; 
+                            <div style="position: fixed; bottom: 20px; left: 20px; width: 195px; height: 120px; 
                                         border:1px solid #ccc; z-index:9999; font-size:10px; color:black;
                                         background-color: rgba(255, 255, 255, 0.85); padding: 8px; border-radius: 5px; 
                                         box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
@@ -439,7 +449,9 @@ if df_dapot is not None:
                 df_dapot_down['Occurrence_Time'] = df_dapot_down.apply(get_down_time, axis=1)
                 df_dapot_down = df_dapot_down.sort_values(by='Occurrence_Time', ascending=True, na_position='last')
                 df_dapot_down['Durasi Down'] = df_dapot_down['Occurrence_Time'].apply(format_durasi)
-                df_dapot_down['Suggestion (Nearest Up)'] = df_dapot_down['NE_CLEAN'].map(suggestion_site_ids)
+                
+                # Assign Suggestions back accurately using DataFrame Index
+                df_dapot_down['Suggestion (Nearest Up)'] = df_dapot_down.index.map(suggestion_site_ids)
                 df_dapot_down = df_dapot_down.explode('Suggestion (Nearest Up)')
                 
                 kolom_detail = {
