@@ -159,7 +159,7 @@ if df_dapot is not None:
             cond_pow, cond_l1, cond_l2 = pd.Series(False, index=df_ume.index), pd.Series(False, index=df_ume.index), pd.Series(False, index=df_ume.index)
             cond_pot = pd.Series(False, index=df_ume.index)
             
-            # Mask untuk Filter Alarm Spesifik
+            # Mask untuk Filter Alarm Spesifik (Ditambahkan astype(str) agar tidak error float)
             s1_mask = pd.Series(False, index=df_ume.index)
             cell_mask = pd.Series(False, index=df_ume.index)
             vswr_mask = pd.Series(False, index=df_ume.index)
@@ -172,20 +172,20 @@ if df_dapot is not None:
                 cond_l2 = df_ume['Alarm Code Name'].astype(str).str.contains('Site Abis control link broken', case=False, na=False)
                 cond_pot = df_ume['Alarm Code Name'].astype(str).str.contains('mains|ac fail|battery|low batt', case=False, na=False)
                 
-                s1_mask = df_ume['Alarm Code Name'].str.contains('s1 link|s1-gtpu', case=False, na=False)
-                cell_mask = df_ume['Alarm Code Name'].str.contains('cell outage|cell shutdown|cell inter', case=False, na=False)
-                vswr_mask = df_ume['Alarm Code Name'].str.contains('vswr|antenna standing', case=False, na=False)
-                temp_mask = df_ume['Alarm Code Name'].str.contains('high temp', case=False, na=False)
+                s1_mask = df_ume['Alarm Code Name'].astype(str).str.contains('s1 link|s1-gtpu', case=False, na=False)
+                cell_mask = df_ume['Alarm Code Name'].astype(str).str.contains('cell outage|cell shutdown|cell inter', case=False, na=False)
+                vswr_mask = df_ume['Alarm Code Name'].astype(str).str.contains('vswr|antenna standing', case=False, na=False)
+                temp_mask = df_ume['Alarm Code Name'].astype(str).str.contains('high temp', case=False, na=False)
 
             if 'Specific Problem' in df_ume.columns:
                 cond_l1 = cond_l1 | df_ume['Specific Problem'].astype(str).str.contains('The link between the server and the ME is broken', case=False, na=False)
                 cond_l2 = cond_l2 | df_ume['Specific Problem'].astype(str).str.contains('Site Abis control link broken', case=False, na=False)
                 cond_pot = cond_pot | df_ume['Specific Problem'].astype(str).str.contains('mains|ac fail|battery|low batt', case=False, na=False)
                 
-                s1_mask = s1_mask | df_ume['Specific Problem'].str.contains('s1 link|s1-gtpu', case=False, na=False)
-                cell_mask = cell_mask | df_ume['Specific Problem'].str.contains('cell outage|cell shutdown|cell inter', case=False, na=False)
-                vswr_mask = vswr_mask | df_ume['Specific Problem'].str.contains('vswr|antenna standing', case=False, na=False)
-                temp_mask = temp_mask | df_ume['Specific Problem'].str.contains('high temp', case=False, na=False)
+                s1_mask = s1_mask | df_ume['Specific Problem'].astype(str).str.contains('s1 link|s1-gtpu', case=False, na=False)
+                cell_mask = cell_mask | df_ume['Specific Problem'].astype(str).str.contains('cell outage|cell shutdown|cell inter', case=False, na=False)
+                vswr_mask = vswr_mask | df_ume['Specific Problem'].astype(str).str.contains('vswr|antenna standing', case=False, na=False)
+                temp_mask = temp_mask | df_ume['Specific Problem'].astype(str).str.contains('high temp', case=False, na=False)
 
             # Ekstrak ID untuk Filter Spesifik
             def get_ids_by_mask(mask):
