@@ -9,6 +9,16 @@ from streamlit_gsheets import GSheetsConnection
 # --- 1. KONFIGURASI LAYOUT ---
 st.set_page_config(page_title="Site Down Monitoring Kalimantan (ZTE Only)", layout="wide", initial_sidebar_state="collapsed")
 
+# Inisialisasi Session State untuk Filter Status Tombol
+if 'status_filter' not in st.session_state:
+    st.session_state.status_filter = 'All'
+
+def set_status(status):
+    if st.session_state.status_filter == status:
+        st.session_state.status_filter = 'All'
+    else:
+        st.session_state.status_filter = status
+
 st.markdown("""
     <style>
         .block-container { padding-top: 1.5rem; padding-bottom: 2rem; padding-left: 2rem; padding-right: 2rem; max-width: 100%; }
@@ -182,7 +192,6 @@ if df_dapot is not None:
 
             down_ids, min_occ_down = extract_ids_and_time(df_down)
             pot_ids, min_occ_pot = extract_ids_and_time(df_pot)
-            
             min_occurrence = {**min_occ_pot, **min_occ_down}
 
             if 'LAT' in df_dapot.columns and 'LONG' in df_dapot.columns:
@@ -240,17 +249,27 @@ if df_dapot is not None:
                 idx_pal = next((i for i, v in enumerate(list_nop) if 'palangka' in str(v).lower()), 0)
                 selected_nop = st.selectbox("📌 Filter NOP", list_nop, index=idx_pal)
                 
-                df_active = df_dapot[df_dapot['NOP'] == selected_nop].copy()
-                st.write("") 
+                df_active_base = df_dapot[df_dapot['NOP'] == selected_nop].copy()
                 
-                up_cnt = len(df_active[df_active['Status'] == 'Up'])
-                pot_cnt = len(df_active[df_active['Status'] == 'Potential Down'])
-                down_cnt = len(df_active[df_active['Status'] == 'Down'])
+                up_cnt = len(df_active_base[df_active_base['Status'] == 'Up'])
+                pot_cnt = len(df_active_base[df_active_base['Status'] == 'Potential Down'])
+                down_cnt = len(df_active_base[df_active_base['Status'] == 'Down'])
                 
+                st.write("<span style='font-size:12px; color:gray;'>*💡 Klik kotak status di bawah untuk mengisolasi data di Peta & Tabel*</span>", unsafe_allow_html=True)
                 c1, c2, c3 = st.columns(3)
-                c1.success(f"✅ **Up:** {up_cnt}")
-                c2.warning(f"⚠️ **Potential Down:** {pot_cnt}")
-                c3.error(f"🚨 **Down:** {down_cnt}")
+                with c1:
+                    btn_up = st.button(f"✅ Up: {up_cnt}", type="primary" if st.session_state.status_filter == 'Up' else "secondary", use_container_width=True, on_click=set_status, args=('Up',))
+                with c2:
+                    btn_pot = st.button(f"⚠️ Potential Down: {pot_cnt}", type="primary" if st.session_state.status_filter == 'Potential Down' else "secondary", use_container_width=True, on_click=set_status, args=('Potential Down',))
+                with c3:
+                    btn_dwn = st.button(f"🚨 Down: {down_cnt}", type="primary" if st.session_state.status_filter == 'Down' else "secondary", use_container_width=True, on_click=set_status, args=('Down',))
+                
+                if st.session_state.status_filter != 'All':
+                    df_active = df_active_base[df_active_base['Status'] == st.session_state.status_filter]
+                else:
+                    df_active = df_active_base
+
+                st.write("") 
                 
                 tab1, tab2, tab3, tab4 = st.tabs(["Kabupaten", "Kecamatan", "Site Class", "Hub/Non Hub"])
                 kab_df = get_summary_table(df_active, 'Kota/Kab')
@@ -273,9 +292,10 @@ if df_dapot is not None:
                 df_map = df_active.copy()
                 if filter_col and filter_val:
                     df_map = df_map[df_map[filter_col] == filter_val]
-                    st.info(f"📍 Area **{selected_nop}** - Filter: **{filter_col} ({filter_val})** (Gunakan tombol 🗂️ di peta untuk Legend & Toggles)")
+                    st.info(f"📍 Area **{selected_nop}** - Filter: **{filter_col} ({filter_val})** (Tombol 🗂️ di peta untuk Legend & Toggles)")
                 else:
-                    st.info(f"📍 Seluruh Area **{selected_nop}** (Gunakan tombol 🗂️ di peta untuk Legend & Toggles)")
+                    status_text = f" ({st.session_state.status_filter})" if st.session_state.status_filter != 'All' else ""
+                    st.info(f"📍 Seluruh Area **{selected_nop}**{status_text} (Tombol 🗂️ di peta untuk Legend & Toggles)")
                 
                 suggestion_site_ids, suggested_up_ids = {}, set()
                 df_up_strict = df_dapot[(df_dapot['Status'] == 'Up') & df_dapot['LAT'].notna() & df_dapot['LONG'].notna()]
@@ -301,7 +321,7 @@ if df_dapot is not None:
                         fg_id = folium.FeatureGroup(name="<span style='color:black; font-size:12px;'>🏷️</span> <b>Tampilkan ID Map</b>", show=False)
                         fg_hub = folium.FeatureGroup(name="<span style='color:#444; font-size:16px;'>★</span> <b>Penanda Hub Site</b>", show=True)
                         
-                        if filter_col in ['Kota/Kab', 'Kecamatan'] and filter_val:
+                        if (filter_col and filter_val) or st.session_state.status_filter != 'All':
                             min_lat, max_lat, min_lon, max_lon = df_map['LAT'].min(), df_map['LAT'].max(), df_map['LONG'].min(), df_map['LONG'].max()
                             if min_lat == max_lat: min_lat -= 0.02; max_lat += 0.02
                             if min_lon == max_lon: min_lon -= 0.02; max_lon += 0.02
@@ -322,11 +342,14 @@ if df_dapot is not None:
                             
                             col_transport = find_col(df_dapot, ['Transport Type', 'Transport', 'Transport_Type'])
                             col_simpul = find_col(df_dapot, ['Simpul 4G/Hub Simpul', 'Simpul 4G', 'Hub Simpul'])
+                            col_simpul_telkom = find_col(df_dapot, ['SIMPUL TELKOM', 'Simpul Telkom', 'simpul telkom', 'SIMPUL_TELKOM'])
                             col_jml_anakan = find_col(df_dapot, ['JUMLAH SITE ANAKAN', 'Jumlah anakan', 'Jumlah Anakan', 'Jml Anakan'])
                             col_id_anakan = find_col(df_dapot, ['SITE ID ANAKAN', 'Site id anakan', 'Site ID Anakan', 'ID Anakan'])
                             
                             transport_type = row[col_transport] if col_transport and pd.notnull(row[col_transport]) else '-'
                             simpul_4g = row[col_simpul] if col_simpul and pd.notnull(row[col_simpul]) else '-'
+                            simpul_telkom = row[col_simpul_telkom] if col_simpul_telkom and pd.notnull(row[col_simpul_telkom]) else '-'
+                            
                             try: jumlah_anakan = int(float(row[col_jml_anakan])) if col_jml_anakan and pd.notnull(row[col_jml_anakan]) else 0
                             except: jumlah_anakan = 0
                             site_id_anakan = row[col_id_anakan] if col_id_anakan and pd.notnull(row[col_id_anakan]) else '-'
@@ -350,14 +373,12 @@ if df_dapot is not None:
                             
                             route_html_button = f'<hr style="margin: 4px 0;"><a href="{route_link}" target="_blank" style="display:block; text-align:center; background:#1a73e8; color:white; padding:4px; text-decoration:none; border-radius:4px; font-weight:bold; font-size:10px;">🔗 Buka Link Route</a>' if (pd.notnull(route_link) and str(route_link).strip() != "" and str(route_link).lower() != "nan") else ""
 
-                            # --- TOOLTIP DIKEMBALIKAN (TANPA SCROLL) ---
-                            # Max-height dan overflow dihapus, font-size dan line-height dipadatkan untuk daftar alarm
                             html_detail = f"""
                             <div style="width: 260px; font-size:11px; color:black; white-space: normal; line-height: 1.3;">
                                 <b style="font-size:13px;">{site_name}</b> <br>Site ID: <b>{site_id}</b><br>
                                 Status: {status_label}{durasi_str}<br><b>Class:</b> {site_class} | <b>Tipe:</b> {hub_status}<br>
                                 <b>Power:</b> {power_type} | <b>Grid:</b> {grid_type}<br><b>Transport:</b> {transport_type}<br>
-                                <b>Simpul 4G:</b> {simpul_4g}<br><b>Jumlah Anakan:</b> {jumlah_anakan} site<br>
+                                <b>Simpul 4G:</b> {simpul_4g}<br><b>Simpul Telkom:</b> {simpul_telkom}<br><b>Jumlah Anakan:</b> {jumlah_anakan} site<br>
                                 <b>Site ID Anakan:</b> <span style="word-break: break-all;">{site_id_anakan}</span>
                                 <hr style="margin: 4px 0;"><b style="font-size:10px;">Daftar Alarm:</b><br>
                                 <div style="font-size:9.5px; line-height:1.2; background:#f1f1f1; padding:4px; border-radius:4px;">
@@ -368,7 +389,6 @@ if df_dapot is not None:
                             if is_hub: shape_html = f'<div style="color:{color_hex}; font-size:18px; margin-top:-4px; margin-left:-2px; text-shadow: -1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF, 0px 0px 4px rgba(0,0,0,0.6);">★</div>'
                             else: shape_html = f'<div style="width:12px; height:12px; background-color:{color_hex}; border:2px solid white; border-radius:50%; box-shadow:0px 0px 3px rgba(0,0,0,0.6);"></div>'
                             
-                            # Revert back to Tooltip instead of Popup
                             folium.Marker(
                                 location=[lat, lon],
                                 icon=folium.DivIcon(html=f'<div style="position:relative; width:12px; height:12px;">{shape_html}</div>', icon_size=(12, 12), icon_anchor=(6, 6)),
@@ -400,37 +420,45 @@ if df_dapot is not None:
                         st.warning("Tidak ada data site pada area yang dipilih.")
 
             st.divider()
-            st.subheader("📋 Detail Site Down")
             
-            df_dapot_down = df_map[df_map['Status'] == 'Down'].copy()
-            if not df_dapot_down.empty:
+            if st.session_state.status_filter == 'All':
+                df_followup = df_map[df_map['Status'].isin(['Down', 'Potential Down'])].copy()
+                st.subheader("📋 Detail Site (Follow Up: Down & Potential Down)")
+            elif st.session_state.status_filter == 'Up':
+                df_followup = df_map[df_map['Status'] == 'Up'].copy()
+                st.subheader("📋 Detail Site (Status Up)")
+            else:
+                df_followup = df_map[df_map['Status'] == st.session_state.status_filter].copy()
+                st.subheader(f"📋 Detail Site (Status {st.session_state.status_filter})")
+
+            if not df_followup.empty:
                 def get_down_time(row):
                     for c in [row['C2'], row['C3'], row['C1']]:
                         if c in min_occurrence: return min_occurrence[c]
                     return pd.NaT
 
-                df_dapot_down['Occurrence_Time'] = df_dapot_down.apply(get_down_time, axis=1)
-                df_dapot_down = df_dapot_down.sort_values(by='Occurrence_Time', ascending=True, na_position='last')
-                df_dapot_down['Durasi Down'] = df_dapot_down['Occurrence_Time'].apply(format_durasi)
-                df_dapot_down['Suggestion (Nearest Up)'] = df_dapot_down.index.map(suggestion_site_ids)
-                df_dapot_down = df_dapot_down.explode('Suggestion (Nearest Up)')
+                df_followup['Occurrence_Time'] = df_followup.apply(get_down_time, axis=1)
+                df_followup = df_followup.sort_values(by='Occurrence_Time', ascending=True, na_position='last')
+                df_followup['Durasi Alarm'] = df_followup['Occurrence_Time'].apply(format_durasi)
+                df_followup['Suggestion (Nearest Up)'] = df_followup.index.map(suggestion_site_ids)
+                df_followup = df_followup.explode('Suggestion (Nearest Up)')
                 
                 kolom_detail = {
-                    'Site_ID': 'Site ID', 'Site_Name': 'Site Name', 'Site Class': 'Site Class',
+                    'Site_ID': 'Site ID', 'Site_Name': 'Site Name', 'Status': 'Status', 'Site Class': 'Site Class',
                     'Kota/Kab': 'Kabupaten', 'Kecamatan': 'Kecamatan', 'POWER TYPE': 'Tipe Power',
                     'Grid Category New': 'Grid', 'Hub site': 'Hub/Non Hub', 'Simpul 4G': 'Simpul 4G',
-                    'Durasi Down': 'Durasi Down', 'Suggestion (Nearest Up)': 'Recommend to Optim crowd'
+                    'Durasi Alarm': 'Durasi Alarm', 'Suggestion (Nearest Up)': 'Recommend to Optim crowd'
                 }
                 
-                df_detail_final = df_dapot_down[[k for k in kolom_detail.keys() if k in df_dapot_down.columns]].rename(columns=kolom_detail)
+                df_detail_final = df_followup[[k for k in kolom_detail.keys() if k in df_followup.columns]].rename(columns=kolom_detail)
                 if 'Site ID' in df_detail_final.columns: df_detail_final = df_detail_final.set_index('Site ID')
                 st.dataframe(df_detail_final, height=350, use_container_width=True)
             else:
-                st.info("🎉 Sistem normal. Tidak ada site yang berstatus Down saat ini pada filter yang dipilih.")
+                st.info("🎉 Tidak ada data site yang perlu di-follow up pada filter saat ini.")
                     
         except Exception as e:
             st.error(f"🚨 Terjadi kesalahan saat memproses data: {e}")
             st.exception(e)
 
 # --- FOOTER CUSTOM ---
-st.markdown("<hr style='margin-top: 3rem; margin-bottom: 1rem;'/><p style='text-align: center; color: #888; font-size: 14px;'>© 2026 | Created with ❤️ by Fauzi Ramdani - 97122</p>", unsafe_allow_html=True)
+st.markdown("<hr style='margin: 3rem 0 1rem 0;'/><p style='text-align: center; color: #888; font-size: 14px;'>© 2026 | Created with ❤️ by Fauzi Ramdani - 97122</p>", unsafe_allow_html=True)
