@@ -191,7 +191,7 @@ if df_ume is not None and not df_ume.empty:
         c_down = df_dapot['C2'].isin(down_ids) | df_dapot['C3'].isin(down_ids) | df_dapot['C1'].isin(down_ids)
         df_dapot.loc[c_down, 'Status'] = 'Down'
 
-# 🔥 HITUNG JUMLAH SITE UNIK BERDASARKAN KOLOM GABUNGAN ALARM (1 Site = 1 Hitungan)
+# 🔥 HITUNG JUMLAH MURNI 1 SITE = 1 HITUNGAN DARI df_dapot YANG SUDAH BERSIH
 if df_dapot is not None and not df_dapot.empty and 'All_Alarms' in df_dapot.columns:
     count_s1 = df_dapot['All_Alarms'].str.contains('s1 link|s1-gtpu', case=False, na=False).sum()
     count_cell = df_dapot['All_Alarms'].str.contains('cell outage|cell shutdown|cell inter', case=False, na=False).sum()
@@ -280,7 +280,7 @@ if df_dapot is not None:
                 
                 df_active_base = df_dapot[df_dapot['NOP'] == selected_nop].copy()
                 
-                # Integrasi Filter Spesifik Murni per Baris Master Unique
+                # Filter Spesifik berdasarkan All_Alarms murni di Master yang sudah bersih
                 is_spesifik_filtered = f_s1 or f_cell or f_vswr or f_temp
                 if is_spesifik_filtered:
                     mask_sp = pd.Series(False, index=df_active_base.index)
