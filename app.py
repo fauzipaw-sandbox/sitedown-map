@@ -9,7 +9,6 @@ from streamlit_gsheets import GSheetsConnection
 # --- 1. KONFIGURASI LAYOUT ---
 st.set_page_config(page_title="Site Down Monitoring Kalimantan (ZTE Only)", layout="wide", initial_sidebar_state="collapsed")
 
-# Inisialisasi Session State untuk Filter Status Tombol
 if 'status_filter' not in st.session_state:
     st.session_state.status_filter = 'All'
 
@@ -19,7 +18,7 @@ def set_status(status):
     else:
         st.session_state.status_filter = status
 
-# CSS Sihir: Menyembunyikan seluruh indikator loading Streamlit agar klik UI terasa instan (Zero-Loading)
+# CSS Anti-Loading (Biar UI Instan)
 st.markdown("""
     <style>
         .block-container { padding-top: 1.5rem; padding-bottom: 2rem; padding-left: 2rem; padding-right: 2rem; max-width: 100%; }
@@ -84,8 +83,7 @@ if df_ume is not None and not df_ume.empty and 'Occurrence Time' in df_ume.colum
     last_update_str = latest_time.strftime("%d-%m-%Y %H:%M:%S") if pd.notnull(latest_time) else "Tidak diketahui"
 else: last_update_str = "Belum Ada Data"
 
-# --- 4.5. PROSES MAPPING & ANTI-DUPLICATE ---
-count_s1, count_cell, count_vswr, count_temp = 0, 0, 0, 0
+# --- 4.5. PROSES MAPPING & ANTI-DUPLICATE MASTER ---
 all_alarm_dict = {}
 min_occurrence = {}
 
@@ -106,7 +104,7 @@ if df_dapot is not None and not df_dapot.empty:
     df_dapot['C3'] = df_dapot['Site_Name'].astype(str).apply(get_6digit_id) if 'Site_Name' in df_dapot.columns else pd.Series([""] * len(df_dapot))
     df_dapot['NE_CLEAN'] = df_dapot.apply(lambda row: str(row.get('C2') or row.get('C3') or row.get('C1') or "").strip(), axis=1)
 
-    # 🔥 HAPUS DUPLIKAT BARIS DI MASTER (1 Site ID murni = 1 Baris)
+    # 🔥 BERSIHKAN DUPLIKAT DI MASTER (1 Site ID murni = 1 Baris)
     df_dapot = df_dapot[df_dapot['NE_CLEAN'] != ''].copy()
     df_dapot.drop_duplicates(subset=['NE_CLEAN'], keep='first', inplace=True)
 
@@ -119,7 +117,6 @@ if df_ume is not None and not df_ume.empty:
     df_ume['V1'] = df_ume['ME ID'].apply(clean_id) if 'ME ID' in df_ume.columns else ""
     df_ume['V2'] = df_ume['Site Name(Office)'].apply(get_6digit_id) if 'Site Name(Office)' in df_ume.columns else ""
     
-    # 1. Bikin Dictionary Semua Alarm (Digabung per Site ID)
     m1 = (df_ume['V1'] != '') & (df_ume['V1'].notna())
     dict1 = df_ume[m1].groupby('V1')['Alarm_Detail'].apply(lambda x: "<br>".join(x.unique())).to_dict()
     m2 = (df_ume['V2'] != '') & (df_ume['V2'].notna())
@@ -132,20 +129,14 @@ if df_ume is not None and not df_ume.empty:
             if k in dict2: items.extend(dict2[k].split('<br>'))
             all_alarm_dict[k] = "<br>".join(list(dict.fromkeys(items)))
 
-    # 2. Inject Semua Alarm ke Master Data (df_dapot)
+    # Inject Gabungan Alarm ke df_dapot
     if df_dapot is not None and not df_dapot.empty:
         df_dapot['All_Alarms'] = df_dapot['C2'].map(all_alarm_dict)
         df_dapot['All_Alarms'] = df_dapot['All_Alarms'].fillna(df_dapot['C3'].map(all_alarm_dict))
         df_dapot['All_Alarms'] = df_dapot['All_Alarms'].fillna(df_dapot['C1'].map(all_alarm_dict))
         df_dapot['All_Alarms'] = df_dapot['All_Alarms'].fillna("")
 
-        # 🔥 KALKULASI MURNI JUMLAH SITE UNIK YANG TERDAMPAK
-        count_s1 = df_dapot['All_Alarms'].str.contains('s1 link|s1-gtpu', case=False, na=False).sum()
-        count_cell = df_dapot['All_Alarms'].str.contains('cell outage|cell shutdown|cell inter', case=False, na=False).sum()
-        count_vswr = df_dapot['All_Alarms'].str.contains('vswr|antenna standing', case=False, na=False).sum()
-        count_temp = df_dapot['All_Alarms'].str.contains('high temp', case=False, na=False).sum()
-
-    # 3. Logika Penentuan Down / Potential Down (Murni)
+    # Logika Penentuan Down / Potential Down
     cond_pow, cond_l1, cond_l2 = [pd.Series(False, index=df_ume.index)] * 3
     cond_pot = pd.Series(False, index=df_ume.index)
     
@@ -176,16 +167,11 @@ if df_ume is not None and not df_ume.empty:
         ids_raw = set(); min_occ = {}
         if 'Occurrence Time' in df_source.columns:
             df_source['Occurrence_DT'] = pd.to_datetime(df_source['Occurrence Time'], errors='coerce')
-            
             v1 = df_source.dropna(subset=['Occurrence_DT', 'V1']) if 'V1' in df_source.columns else pd.DataFrame()
             v2 = df_source.dropna(subset=['Occurrence_DT', 'V2']) if 'V2' in df_source.columns else pd.DataFrame()
-            
             min1 = v1.groupby('V1')['Occurrence_DT'].min().to_dict() if not v1.empty else {}
             min2 = v2.groupby('V2')['Occurrence_DT'].min().to_dict() if not v2.empty else {}
-            
-            ids_raw.update(min1.keys())
-            ids_raw.update(min2.keys())
-            
+            ids_raw.update(min1.keys()); ids_raw.update(min2.keys())
             for k in set(min1.keys()).union(set(min2.keys())):
                 if k and str(k).strip() != '' and str(k).lower() not in ['nan', 'none']:
                     t1, t2 = min1.get(k, pd.NaT), min2.get(k, pd.NaT)
@@ -204,6 +190,15 @@ if df_ume is not None and not df_ume.empty:
         df_dapot.loc[c_pot, 'Status'] = 'Potential Down'
         c_down = df_dapot['C2'].isin(down_ids) | df_dapot['C3'].isin(down_ids) | df_dapot['C1'].isin(down_ids)
         df_dapot.loc[c_down, 'Status'] = 'Down'
+
+# 🔥 HITUNG JUMLAH SITE UNIK BERDASARKAN KOLOM GABUNGAN ALARM (1 Site = 1 Hitungan)
+if df_dapot is not None and not df_dapot.empty and 'All_Alarms' in df_dapot.columns:
+    count_s1 = df_dapot['All_Alarms'].str.contains('s1 link|s1-gtpu', case=False, na=False).sum()
+    count_cell = df_dapot['All_Alarms'].str.contains('cell outage|cell shutdown|cell inter', case=False, na=False).sum()
+    count_vswr = df_dapot['All_Alarms'].str.contains('vswr|antenna standing', case=False, na=False).sum()
+    count_temp = df_dapot['All_Alarms'].str.contains('high temp', case=False, na=False).sum()
+else:
+    count_s1, count_cell, count_vswr, count_temp = 0, 0, 0, 0
 
 def format_durasi(start_time):
     if pd.isnull(start_time): return "-"
@@ -285,7 +280,7 @@ if df_dapot is not None:
                 
                 df_active_base = df_dapot[df_dapot['NOP'] == selected_nop].copy()
                 
-                # Integrasi Filter Spesifik secara Akurat!
+                # Integrasi Filter Spesifik Murni per Baris Master Unique
                 is_spesifik_filtered = f_s1 or f_cell or f_vswr or f_temp
                 if is_spesifik_filtered:
                     mask_sp = pd.Series(False, index=df_active_base.index)
@@ -299,7 +294,6 @@ if df_dapot is not None:
                 pot_cnt = len(df_active_base[df_active_base['Status'] == 'Potential Down'])
                 down_cnt = len(df_active_base[df_active_base['Status'] == 'Down'])
                 
-                # Tombol Filter Status
                 c1, c2, c3 = st.columns(3)
                 with c1: btn_up = st.button(f"✅ Up: {up_cnt}", type="primary" if st.session_state.status_filter == 'Up' else "secondary", use_container_width=True, on_click=set_status, args=('Up',))
                 with c2: btn_pot = st.button(f"⚠️ Potential Down: {pot_cnt}", type="primary" if st.session_state.status_filter == 'Potential Down' else "secondary", use_container_width=True, on_click=set_status, args=('Potential Down',))
@@ -333,7 +327,7 @@ if df_dapot is not None:
                 df_map = df_active.copy()
                 if filter_col and filter_val:
                     df_map = df_map[df_map[filter_col] == filter_val]
-                    st.info(f"📍 Area **{selected_nop}** - Filter: **{filter_col} ({filter_val})** (Tombol 🗂️ di peta untuk Legend)")
+                    st.info(f"📍 Area **{selected_nop}** - Filter: **{filter_col} ({filter_val})** (Tombol 🗂️ di peta untuk Legend & Toggles)")
                 else:
                     status_text = f" ({st.session_state.status_filter})" if st.session_state.status_filter != 'All' else ""
                     sp_text = " (Filter Alarm Aktif)" if is_spesifik_filtered else ""
@@ -404,7 +398,6 @@ if df_dapot is not None:
                             else:
                                 color_hex, status_label, target_layer = '#00802b', '<b style="color:green;">Up</b>', fg_up
 
-                            # Sinkronisasi Alarm langsung dari All_Alarms murni
                             alarms_terkait = row.get('All_Alarms', "")
                             if alarms_terkait == "": alarms_terkait = "<i style='color:gray;'>Tidak ada alarm aktif</i>"
                             
