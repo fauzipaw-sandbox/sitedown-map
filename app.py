@@ -214,7 +214,6 @@ if df_dapot is not None:
                 df_dapot['LAT'] = df_dapot['LAT'].astype(str).str.replace(',', '.').astype(float)
                 df_dapot['LONG'] = df_dapot['LONG'].astype(str).str.replace(',', '.').astype(float)
 
-            # Memastikan text NOP menggunakan Full Kapital dan wilayah lain Title Case
             for col in ['Kota/Kab', 'Kecamatan']:
                 if col in df_dapot.columns:
                     df_dapot[col] = df_dapot[col].apply(lambda x: str(x).title() if pd.notnull(x) else x)
@@ -275,7 +274,7 @@ if df_dapot is not None:
                 with c_tog1:
                     show_labels = st.toggle("ID Map", value=False)
                 with c_tog2:
-                    show_legend = st.toggle("Legenda", value=True)
+                    show_legend = st.toggle("Legend", value=True)
                 
                 df_active = df_dapot[df_dapot['NOP'] == selected_nop].copy()
                 st.write("") 
@@ -334,26 +333,20 @@ if df_dapot is not None:
                         m = folium.Map(location=[df_map['LAT'].mean(), df_map['LONG'].mean()], zoom_start=10)
                         folium.TileLayer(tiles='https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', attr='Google', name='Google Satellite').add_to(m)
                         
-                        if filter_col in ['Kota/Kab', 'Kecamatan'] and filter_val:
-                            min_lat, max_lat = df_map['LAT'].min(), df_map['LAT'].max()
-                            min_lon, max_lon = df_map['LONG'].min(), df_map['LONG'].max()
-                            
-                            if min_lat == max_lat: min_lat -= 0.02; max_lat += 0.02
-                            if min_lon == max_lon: min_lon -= 0.02; max_lon += 0.02
-                            
-                            bounds = [[min_lat, min_lon], [max_lat, max_lon]]
-                            m.fit_bounds(bounds)
-
+                        # --- PERBAIKAN LEGENDA (KOMPAK, TRANSPARAN & TULISAN LEGEND) ---
                         if show_legend:
                             legend_html = '''
-                            <div style="position: fixed; bottom: 20px; left: 20px; width: 195px; height: 120px; 
-                                        border:2px solid grey; z-index:9999; font-size:12px; color:black;
-                                        background-color:white; padding: 10px; border-radius: 5px; opacity: 0.95;">
-                            <b style="color:black;">Legenda Peta</b><br>
-                            <i style="background:#e60000; width: 12px; height: 12px; float: left; margin-right: 8px; margin-top: 3px; border-radius: 50%;"></i> <span style="color:black;">Down</span><br>
-                            <i style="background:#00802b; width: 12px; height: 12px; float: left; margin-right: 8px; margin-top: 3px; border-radius: 50%;"></i> <span style="color:black;">Up</span><br>
-                            <i style="background:#0066ff; width: 12px; height: 12px; float: left; margin-right: 8px; margin-top: 3px; border-radius: 50%;"></i> <span style="color:black;">Recommend to Optim crowd</span><br>
-                            <div style="color:#444; font-size:16px; float:left; margin-right:7px; margin-top:-3px; margin-left:-2px;">★</div> <span style="color:black;">Hub site</span><br>
+                            <div style="position: fixed; bottom: 20px; left: 20px; width: auto; height: auto; 
+                                        border:1px solid #ccc; z-index:9999; font-size:10px; color:black;
+                                        background-color: rgba(255, 255, 255, 0.85); padding: 8px; border-radius: 5px; 
+                                        box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+                            <b style="color:black; font-size:11px;">Legend</b><br>
+                            <div style="margin-top: 4px;">
+                                <i style="background:#e60000; width: 10px; height: 10px; float: left; margin-right: 6px; margin-top: 3px; border-radius: 50%;"></i> <span style="color:black;">Down</span><br>
+                                <i style="background:#00802b; width: 10px; height: 10px; float: left; margin-right: 6px; margin-top: 3px; border-radius: 50%;"></i> <span style="color:black;">Up</span><br>
+                                <i style="background:#0066ff; width: 10px; height: 10px; float: left; margin-right: 6px; margin-top: 3px; border-radius: 50%;"></i> <span style="color:black;">Recommend to Optim crowd</span><br>
+                                <div style="color:#444; font-size:14px; float:left; margin-right:5px; margin-top:-3px; margin-left:-2px;">★</div> <span style="color:black;">Hub site</span><br>
+                            </div>
                             </div>
                             '''
                             m.get_root().html.add_child(folium.Element(legend_html))
