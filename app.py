@@ -71,7 +71,7 @@ def get_6digit_id(text):
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- 4. TARIK DATA DARI DATABASE (Dengan Cache Clear Paksa) ---
+# --- 4. TARIK DATA DARI DATABASE (Force Reset Cache) ---
 st.cache_data.clear()
 
 try: df_dapot = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet=1, sql="SELECT *", ttl=0)
@@ -100,6 +100,10 @@ if df_dapot is not None and not df_dapot.empty:
     
     col_class = find_col(df_dapot, ['SITE CLASS', 'Site_Class', 'Site Class', 'Class'])
     df_dapot['Site Class'] = df_dapot[col_class].fillna('-') if col_class else '-'
+
+    # Ambil Kolom Site Name Asli dari Data Site
+    col_site_name_real = find_col(df_dapot, ['Site_Name', 'Site Name', 'site_name', 'Site Name(Office)'])
+    df_dapot['Real_Site_Name'] = df_dapot[col_site_name_real].fillna('Unknown') if col_site_name_real else 'Unknown'
 
     df_dapot['C1'] = df_dapot['NE ID'].apply(clean_id) if 'NE ID' in df_dapot.columns else pd.Series([""] * len(df_dapot))
     df_dapot['C2'] = df_dapot['Site_ID'].astype(str).apply(get_6digit_id) if 'Site_ID' in df_dapot.columns else pd.Series([""] * len(df_dapot))
@@ -137,8 +141,8 @@ if df_ume is not None and not df_ume.empty:
         df_dapot['All_Alarms'] = df_dapot['All_Alarms'].fillna(df_dapot['C1'].map(all_alarm_dict))
         df_dapot['All_Alarms'] = df_dapot['All_Alarms'].fillna("")
 
-    # Logika Down / Potential Down
-    cond_pow, cond_l1, cond_l2 = [pd.Series(False, index=df_ume.index)] * 3
+    # Logika Down / Potential Down (Ditambah eNodeB is out of service)
+    cond_pow, cond_l1, cond_l2, cond_enodeb = [pd.Series(False, index=df_ume.index)] * 4
     cond_pot = pd.Series(False, index=df_ume.index)
     
     if 'Alarm Code Name' in df_ume.columns:
@@ -146,15 +150,17 @@ if df_ume is not None and not df_ume.empty:
         if 'Position' in df_ume.columns: cond_pow = cond_pow & (df_ume['Position'].astype(str).str.strip() == 'Equipment=1')
         cond_l1 = df_ume['Alarm Code Name'].astype(str).str.contains('The link between the server and the ME is broken', case=False, na=False)
         cond_l2 = df_ume['Alarm Code Name'].astype(str).str.contains('Site Abis control link broken', case=False, na=False)
+        cond_enodeb = df_ume['Alarm Code Name'].astype(str).str.contains('enodeb is out of service', case=False, na=False)
         cond_pot = df_ume['Alarm Code Name'].astype(str).str.contains('mains|ac fail|battery|low batt', case=False, na=False)
 
     if 'Specific Problem' in df_ume.columns:
         cond_l1 = cond_l1 | df_ume['Specific Problem'].astype(str).str.contains('The link between the server and the ME is broken', case=False, na=False)
         cond_l2 = cond_l2 | df_ume['Specific Problem'].astype(str).str.contains('Site Abis control link broken', case=False, na=False)
+        cond_enodeb = cond_enodeb | df_ume['Specific Problem'].astype(str).str.contains('enodeb is out of service', case=False, na=False)
         cond_pot = cond_pot | df_ume['Specific Problem'].astype(str).str.contains('mains|ac fail|battery|low batt', case=False, na=False)
 
-    df_down = df_ume[cond_pow | cond_l1 | cond_l2].copy()
-    df_pot_raw = df_ume[cond_pot & ~(cond_pow | cond_l1 | cond_l2)].copy()
+    df_down = df_ume[cond_pow | cond_l1 | cond_l2 | cond_enodeb].copy()
+    df_pot_raw = df_ume[cond_pot & ~(cond_pow | cond_l1 | cond_l2 | cond_enodeb)].copy()
 
     now_wib = pd.Timestamp.now(tz='Asia/Jakarta').tz_localize(None)
     if 'Occurrence Time' in df_pot_raw.columns:
@@ -271,11 +277,15 @@ if df_dapot is not None:
                 dyn_vswr = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['vswr', 'antenna standing']) else 0).sum()
                 dyn_temp = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['high temp']) else 0).sum()
                 
-                # 4 Alarm Baru yang Diminta
+                # Alarm Tambahan Baru
                 dyn_packet = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['packet loss', 'high packet loss']) else 0).sum()
                 dyn_sleeping = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['sleeping cell', 'sleeping']) else 0).sum()
                 dyn_rru_pwr = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['rru power abnormal', 'rru power']) else 0).sum()
                 dyn_rru_lnk = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['rru link interrupted', 'rru link']) else 0).sum()
+                dyn_genset_fail = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['genset fail']) else 0).sum()
+                dyn_genset_run = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['genset running']) else 0).sum()
+                dyn_rssi = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['rssi', 'reverse link rssi']) else 0).sum()
+                dyn_ul_interf = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['high ul interference']) else 0).sum()
 
                 # Render ulang popover filter alarm dinamis
                 with popover_placeholder.popover("🔍 Filter Alarm", use_container_width=True):
@@ -288,11 +298,15 @@ if df_dapot is not None:
                     f_sleeping = st.checkbox(f"**Sleeping Cell** - {dyn_sleeping} sites")
                     f_rru_pwr = st.checkbox(f"**RRU Power Abnormal** - {dyn_rru_pwr} sites")
                     f_rru_lnk = st.checkbox(f"**RRU Link Interrupted** - {dyn_rru_lnk} sites")
+                    f_genset_fail = st.checkbox(f"**GENSET FAIL** - {dyn_genset_fail} sites")
+                    f_genset_run = st.checkbox(f"**GENSET RUNNING** - {dyn_genset_run} sites")
+                    f_rssi = st.checkbox(f"**RSSI** - {dyn_rssi} sites")
+                    f_ul_interf = st.checkbox(f"**High UL Interference** - {dyn_ul_interf} sites")
                 
                 df_active_base = df_nop_filtered
                 
                 # Filter Spesifik berdasarkan pilihan checkbox alarm aktif
-                is_spesifik_filtered = f_s1 or f_cell or f_vswr or f_temp or f_packet or f_sleeping or f_rru_pwr or f_rru_lnk
+                is_spesifik_filtered = f_s1 or f_cell or f_vswr or f_temp or f_packet or f_sleeping or f_rru_pwr or f_rru_lnk or f_genset_fail or f_genset_run or f_rssi or f_ul_interf
                 if is_spesifik_filtered:
                     mask_sp = pd.Series(False, index=df_active_base.index)
                     if f_s1: mask_sp |= df_active_base['All_Alarms'].apply(lambda x: any(w in str(x).lower() for w in ['s1 link', 's1-gtpu']))
@@ -303,6 +317,10 @@ if df_dapot is not None:
                     if f_sleeping: mask_sp |= df_active_base['All_Alarms'].apply(lambda x: any(w in str(x).lower() for w in ['sleeping cell', 'sleeping']))
                     if f_rru_pwr: mask_sp |= df_active_base['All_Alarms'].apply(lambda x: any(w in str(x).lower() for w in ['rru power abnormal', 'rru power']))
                     if f_rru_lnk: mask_sp |= df_active_base['All_Alarms'].apply(lambda x: any(w in str(x).lower() for w in ['rru link interrupted', 'rru link']))
+                    if f_genset_fail: mask_sp |= df_active_base['All_Alarms'].apply(lambda x: any(w in str(x).lower() for w in ['genset fail']))
+                    if f_genset_run: mask_sp |= df_active_base['All_Alarms'].apply(lambda x: any(w in str(x).lower() for w in ['genset running']))
+                    if f_rssi: mask_sp |= df_active_base['All_Alarms'].apply(lambda x: any(w in str(x).lower() for w in ['rssi', 'reverse link rssi']))
+                    if f_ul_interf: mask_sp |= df_active_base['All_Alarms'].apply(lambda x: any(w in str(x).lower() for w in ['high ul interference']))
                     
                     df_active_base = df_active_base[mask_sp]
                 
@@ -383,7 +401,8 @@ if df_dapot is not None:
                             lat, lon = row['LAT'], row['LONG']
                             site_id = row.get('Site_ID', 'Unknown')
                             ne_id = str(row.get('NE_CLEAN', 'Unknown')).strip()
-                            site_name = row.get('Site_Name', 'Unknown')
+                            # SITE NAME DI TOOLTIP AMBIL DARI KOLOM REAL_SITE_NAME
+                            site_name = row.get('Real_Site_Name', 'Unknown')
                             site_class = row.get('Site Class', '-')
                             status = row['Status']
                             
@@ -495,7 +514,7 @@ if df_dapot is not None:
                 df_followup = df_followup.explode('Suggestion (Nearest Up)')
                 
                 kolom_detail = {
-                    'Site_ID': 'Site ID', 'Site_Name': 'Site Name', 'Status': 'Status', 'Site Class': 'Site Class',
+                    'Site_ID': 'Site ID', 'Real_Site_Name': 'Site Name', 'Status': 'Status', 'Site Class': 'Site Class',
                     'Kota/Kab': 'Kabupaten', 'Kecamatan': 'Kecamatan', 'POWER TYPE': 'Tipe Power',
                     'Grid Category New': 'Grid', 'Hub site': 'Hub/Non Hub', 'Simpul 4G': 'Simpul 4G',
                     'Durasi Alarm': 'Durasi Alarm', 'Suggestion (Nearest Up)': 'Recommend to Optim crowd'
