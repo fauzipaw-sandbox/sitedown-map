@@ -214,9 +214,13 @@ if df_dapot is not None:
                 df_dapot['LAT'] = df_dapot['LAT'].astype(str).str.replace(',', '.').astype(float)
                 df_dapot['LONG'] = df_dapot['LONG'].astype(str).str.replace(',', '.').astype(float)
 
-            for col in ['Kota/Kab', 'Kecamatan', 'NOP']:
+            # Memastikan text NOP menggunakan Full Kapital dan wilayah lain Title Case
+            for col in ['Kota/Kab', 'Kecamatan']:
                 if col in df_dapot.columns:
                     df_dapot[col] = df_dapot[col].apply(lambda x: str(x).title() if pd.notnull(x) else x)
+            if 'NOP' in df_dapot.columns:
+                df_dapot['NOP'] = df_dapot['NOP'].apply(lambda x: str(x).title().replace('Nop', 'NOP') if pd.notnull(x) else x)
+
             if 'Hub site' in df_dapot.columns:
                 df_dapot['Hub site'] = df_dapot['Hub site'].fillna('Non Hub')
                 
@@ -330,41 +334,25 @@ if df_dapot is not None:
                         m = folium.Map(location=[df_map['LAT'].mean(), df_map['LONG'].mean()], zoom_start=10)
                         folium.TileLayer(tiles='https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', attr='Google', name='Google Satellite').add_to(m)
                         
-                        # --- LOGIKA BOUNDING BOX (KOTAK ZONA AREA) & AUTO ZOOM ---
                         if filter_col in ['Kota/Kab', 'Kecamatan'] and filter_val:
                             min_lat, max_lat = df_map['LAT'].min(), df_map['LAT'].max()
                             min_lon, max_lon = df_map['LONG'].min(), df_map['LONG'].max()
                             
-                            # Kasih buffer/jarak aman kalau cuma ada 1 site biar auto-zoom gak terlalu nge-zoom sampai blur
                             if min_lat == max_lat: min_lat -= 0.02; max_lat += 0.02
                             if min_lon == max_lon: min_lon -= 0.02; max_lon += 0.02
                             
                             bounds = [[min_lat, min_lon], [max_lat, max_lon]]
-                            
-                            # Gambar kotak area berwarna
-                            folium.Rectangle(
-                                bounds=bounds,
-                                color='#1a73e8',
-                                fill=True,
-                                fill_color='#1a73e8',
-                                fill_opacity=0.08,
-                                weight=2,
-                                dash_array='5, 5',
-                                tooltip=f"Area Coverage: {filter_val}"
-                            ).add_to(m)
-                            
-                            # Auto-zoom peta menyesuaikan lebar kotak zona
                             m.fit_bounds(bounds)
 
                         if show_legend:
                             legend_html = '''
-                            <div style="position: fixed; bottom: 20px; left: 20px; width: 190px; height: 120px; 
+                            <div style="position: fixed; bottom: 20px; left: 20px; width: 195px; height: 120px; 
                                         border:2px solid grey; z-index:9999; font-size:12px; color:black;
                                         background-color:white; padding: 10px; border-radius: 5px; opacity: 0.95;">
                             <b style="color:black;">Legenda Peta</b><br>
                             <i style="background:#e60000; width: 12px; height: 12px; float: left; margin-right: 8px; margin-top: 3px; border-radius: 50%;"></i> <span style="color:black;">Down</span><br>
                             <i style="background:#00802b; width: 12px; height: 12px; float: left; margin-right: 8px; margin-top: 3px; border-radius: 50%;"></i> <span style="color:black;">Up</span><br>
-                            <i style="background:#0066ff; width: 12px; height: 12px; float: left; margin-right: 8px; margin-top: 3px; border-radius: 50%;"></i> <span style="color:black;">Rekomendasi Optimasi</span><br>
+                            <i style="background:#0066ff; width: 12px; height: 12px; float: left; margin-right: 8px; margin-top: 3px; border-radius: 50%;"></i> <span style="color:black;">Recommend to Optim crowd</span><br>
                             <div style="color:#444; font-size:16px; float:left; margin-right:7px; margin-top:-3px; margin-left:-2px;">★</div> <span style="color:black;">Hub site</span><br>
                             </div>
                             '''
@@ -402,7 +390,7 @@ if df_dapot is not None:
                                 color_hex, status_label = '#e60000', '<b style="color:red;">Down</b>'
                             else:
                                 if ne_id in suggested_up_ids and ne_id.lower() not in ['', 'nan', 'none', 'unknown']:
-                                    color_hex, status_label = '#0066ff', '<b style="color:#0066ff;">Up (Rekomendasi Optimasi)</b>'
+                                    color_hex, status_label = '#0066ff', '<b style="color:#0066ff;">Up (Recommend to Optim crowd)</b>'
                                 else:
                                     color_hex, status_label = '#00802b', '<b style="color:green;">Up</b>'
 
@@ -465,7 +453,7 @@ if df_dapot is not None:
                     'Site_ID': 'Site ID', 'Site_Name': 'Site Name', 'Site Class': 'Site Class',
                     'Kota/Kab': 'Kabupaten', 'Kecamatan': 'Kecamatan', 'POWER TYPE': 'Tipe Power',
                     'Grid Category New': 'Grid', 'Hub site': 'Hub/Non Hub', 'Simpul 4G': 'Simpul 4G',
-                    'Durasi Down': 'Durasi Down', 'Suggestion (Nearest Up)': 'Rekomendasi Site Up'
+                    'Durasi Down': 'Durasi Down', 'Suggestion (Nearest Up)': 'Recommend to Optim crowd'
                 }
                 
                 df_detail_final = df_dapot_down[[k for k in kolom_detail.keys() if k in df_dapot_down.columns]].rename(columns=kolom_detail)
