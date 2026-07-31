@@ -137,12 +137,17 @@ if df_ume is not None and not df_ume.empty:
     ids_vswr = get_ids_by_mask(vswr_mask)
     ids_temp = get_ids_by_mask(temp_mask)
 
-    # Kalkulasi jumlah site yang terdampak secara global
+    # Kalkulasi JUMLAH UNIK SITE (bukan jumlah alarm) yang terdampak secara global
     if df_dapot is not None and not df_dapot.empty:
-        count_s1 = (df_dapot['C1'].isin(ids_s1) | df_dapot['C2'].isin(ids_s1) | df_dapot['C3'].isin(ids_s1)).sum()
-        count_cell = (df_dapot['C1'].isin(ids_cell) | df_dapot['C2'].isin(ids_cell) | df_dapot['C3'].isin(ids_cell)).sum()
-        count_vswr = (df_dapot['C1'].isin(ids_vswr) | df_dapot['C2'].isin(ids_vswr) | df_dapot['C3'].isin(ids_vswr)).sum()
-        count_temp = (df_dapot['C1'].isin(ids_temp) | df_dapot['C2'].isin(ids_temp) | df_dapot['C3'].isin(ids_temp)).sum()
+        m_s1 = df_dapot['C1'].isin(ids_s1) | df_dapot['C2'].isin(ids_s1) | df_dapot['C3'].isin(ids_s1)
+        m_cell = df_dapot['C1'].isin(ids_cell) | df_dapot['C2'].isin(ids_cell) | df_dapot['C3'].isin(ids_cell)
+        m_vswr = df_dapot['C1'].isin(ids_vswr) | df_dapot['C2'].isin(ids_vswr) | df_dapot['C3'].isin(ids_vswr)
+        m_temp = df_dapot['C1'].isin(ids_temp) | df_dapot['C2'].isin(ids_temp) | df_dapot['C3'].isin(ids_temp)
+
+        count_s1 = df_dapot.loc[m_s1, 'NE_CLEAN'].replace('', pd.NA).dropna().nunique()
+        count_cell = df_dapot.loc[m_cell, 'NE_CLEAN'].replace('', pd.NA).dropna().nunique()
+        count_vswr = df_dapot.loc[m_vswr, 'NE_CLEAN'].replace('', pd.NA).dropna().nunique()
+        count_temp = df_dapot.loc[m_temp, 'NE_CLEAN'].replace('', pd.NA).dropna().nunique()
 
 # --- 5. HEADER & TOOLBAR UPLOAD & FILTER ALARM ---
 col_title, col_header_right = st.columns([2.2, 1.8])
@@ -223,7 +228,7 @@ if df_dapot is not None:
                 cond_l1 = df_ume['Alarm Code Name'].astype(str).str.contains('The link between the server and the ME is broken', case=False, na=False)
                 cond_l2 = df_ume['Alarm Code Name'].astype(str).str.contains('Site Abis control link broken', case=False, na=False)
                 cond_pot = df_ume['Alarm Code Name'].astype(str).str.contains('mains|ac fail|battery|low batt', case=False, na=False)
-                
+
             if 'Specific Problem' in df_ume.columns:
                 cond_l1 = cond_l1 | df_ume['Specific Problem'].astype(str).str.contains('The link between the server and the ME is broken', case=False, na=False)
                 cond_l2 = cond_l2 | df_ume['Specific Problem'].astype(str).str.contains('Site Abis control link broken', case=False, na=False)
@@ -278,8 +283,8 @@ if df_dapot is not None:
                 if t_sec < 0: return "0m"
                 d, rem = divmod(t_sec, 86400); h, rem = divmod(rem, 3600); m, _ = divmod(rem, 60)
                 res = []
-                if d > 0: res.append(f"{d}h")
-                if h > 0: res.append(f"{h}j")
+                if d > 0: res.append(f"{d}d")
+                if h > 0: res.append(f"{h}h")
                 res.append(f"{m}m")
                 return " ".join(res)
                 
@@ -356,7 +361,7 @@ if df_dapot is not None:
                     st.info(f"📍 Area **{selected_nop}** - Filter: **{filter_col} ({filter_val})** (Tombol 🗂️ di peta untuk Legend & Toggles)")
                 else:
                     status_text = f" ({st.session_state.status_filter})" if st.session_state.status_filter != 'All' else ""
-                    sp_text = " (Filter Spesifik Aktif)" if is_spesifik_filtered else ""
+                    sp_text = " (Filter Alarm Aktif)" if is_spesifik_filtered else ""
                     st.info(f"📍 Seluruh Area **{selected_nop}**{status_text}{sp_text} (Tombol 🗂️ di peta untuk Legend)")
                 
                 suggestion_site_ids, suggested_up_ids = {}, set()
