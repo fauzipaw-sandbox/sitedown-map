@@ -72,7 +72,7 @@ def get_6digit_id(text):
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- 4. TARIK DATA DARI DATABASE (Tanpa Spinner Animasi) ---
+# --- 4. TARIK DATA DARI DATABASE ---
 try: df_dapot = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet=1, sql="SELECT *", ttl=300)
 except Exception as e: st.error(f"Gagal menarik data site: {e}"); df_dapot = None
     
@@ -84,8 +84,7 @@ if df_ume is not None and not df_ume.empty and 'Occurrence Time' in df_ume.colum
     last_update_str = latest_time.strftime("%d-%m-%Y %H:%M:%S") if pd.notnull(latest_time) else "Tidak diketahui"
 else: last_update_str = "Belum Ada Data"
 
-# --- 4.5. PRE-CALCULATE ALARM MASK & COUNTER ---
-# Pra-kalkulasi ini dilakukan agar angkanya bisa langsung muncul di Top Toolbar
+# --- 4.5. PRE-CALCULATE ALARM MASK & COUNTER DENGAN ANTI-DUPLICATE ---
 if df_dapot is not None and not df_dapot.empty:
     if 'LAT' in df_dapot.columns and 'LONG' in df_dapot.columns:
         df_dapot['LAT'] = df_dapot['LAT'].astype(str).str.replace(',', '.').astype(float)
@@ -104,6 +103,10 @@ if df_dapot is not None and not df_dapot.empty:
     df_dapot['C2'] = df_dapot['Site_ID'].astype(str).apply(get_6digit_id) if 'Site_ID' in df_dapot.columns else pd.Series([""] * len(df_dapot))
     df_dapot['C3'] = df_dapot['Site_Name'].astype(str).apply(get_6digit_id) if 'Site_Name' in df_dapot.columns else pd.Series([""] * len(df_dapot))
     df_dapot['NE_CLEAN'] = df_dapot.apply(lambda row: row.get('C2') or row.get('C3') or row.get('C1') or "", axis=1)
+
+    # 🔥 FIX ANTI-DUPLICATE: Hapus site id yang kosong & buang data master yang double!
+    df_dapot = df_dapot[df_dapot['NE_CLEAN'] != ''].copy()
+    df_dapot.drop_duplicates(subset=['NE_CLEAN'], keep='first', inplace=True)
 
 ids_s1, ids_cell, ids_vswr, ids_temp = set(), set(), set(), set()
 count_s1, count_cell, count_vswr, count_temp = 0, 0, 0, 0
@@ -137,17 +140,12 @@ if df_ume is not None and not df_ume.empty:
     ids_vswr = get_ids_by_mask(vswr_mask)
     ids_temp = get_ids_by_mask(temp_mask)
 
-    # Kalkulasi JUMLAH UNIK SITE (bukan jumlah alarm) yang terdampak secara global
+    # Kalkulasi jumlah site presisi layaknya COUNTA
     if df_dapot is not None and not df_dapot.empty:
-        m_s1 = df_dapot['C1'].isin(ids_s1) | df_dapot['C2'].isin(ids_s1) | df_dapot['C3'].isin(ids_s1)
-        m_cell = df_dapot['C1'].isin(ids_cell) | df_dapot['C2'].isin(ids_cell) | df_dapot['C3'].isin(ids_cell)
-        m_vswr = df_dapot['C1'].isin(ids_vswr) | df_dapot['C2'].isin(ids_vswr) | df_dapot['C3'].isin(ids_vswr)
-        m_temp = df_dapot['C1'].isin(ids_temp) | df_dapot['C2'].isin(ids_temp) | df_dapot['C3'].isin(ids_temp)
-
-        count_s1 = df_dapot.loc[m_s1, 'NE_CLEAN'].replace('', pd.NA).dropna().nunique()
-        count_cell = df_dapot.loc[m_cell, 'NE_CLEAN'].replace('', pd.NA).dropna().nunique()
-        count_vswr = df_dapot.loc[m_vswr, 'NE_CLEAN'].replace('', pd.NA).dropna().nunique()
-        count_temp = df_dapot.loc[m_temp, 'NE_CLEAN'].replace('', pd.NA).dropna().nunique()
+        count_s1 = df_dapot[df_dapot['C1'].isin(ids_s1) | df_dapot['C2'].isin(ids_s1) | df_dapot['C3'].isin(ids_s1)].shape[0]
+        count_cell = df_dapot[df_dapot['C1'].isin(ids_cell) | df_dapot['C2'].isin(ids_cell) | df_dapot['C3'].isin(ids_cell)].shape[0]
+        count_vswr = df_dapot[df_dapot['C1'].isin(ids_vswr) | df_dapot['C2'].isin(ids_vswr) | df_dapot['C3'].isin(ids_vswr)].shape[0]
+        count_temp = df_dapot[df_dapot['C1'].isin(ids_temp) | df_dapot['C2'].isin(ids_temp) | df_dapot['C3'].isin(ids_temp)].shape[0]
 
 # --- 5. HEADER & TOOLBAR UPLOAD & FILTER ALARM ---
 col_title, col_header_right = st.columns([2.2, 1.8])
