@@ -193,12 +193,19 @@ if df_ume is not None and not df_ume.empty:
         c_down = df_dapot['C2'].isin(down_ids) | df_dapot['C3'].isin(down_ids) | df_dapot['C1'].isin(down_ids)
         df_dapot.loc[c_down, 'Status'] = 'Down'
 
-# 🔥 HITUNG JUMLAH SITE UNIQUE AKTUAL BERDASARKAN KECOCOKAN TEKS DI MASTER `All_Alarms`
+# 🔥 HITUNG JUMLAH SITE UNIQUE AKTUAL MENGGUNAKAN NUNIQUE PADA NE_CLEAN DI MASTER
 if df_dapot is not None and not df_dapot.empty and 'All_Alarms' in df_dapot.columns:
-    count_s1 = df_dapot['All_Alarms'].str.contains('s1|gtpu', case=False, na=False).sum()
-    count_cell = df_dapot['All_Alarms'].str.contains('cell|outage|shutdown|inter', case=False, na=False).sum()
-    count_vswr = df_dapot['All_Alarms'].str.contains('vswr|antenna', case=False, na=False).sum()
-    count_temp = df_dapot['All_Alarms'].str.contains('temp|temperature', case=False, na=False).sum()
+    def get_true_unique_site_count(pattern):
+        # Filter baris master yang teks All_Alarms-nya mengandung pola alarm
+        matched_rows = df_dapot[df_dapot['All_Alarms'].str.contains(pattern, case=False, na=False)]
+        if matched_rows.empty: return 0
+        # Ambil NE_CLEAN lalu hitung jumlah unik (.nunique()) murni per site
+        return matched_rows['NE_CLEAN'].nunique()
+
+    count_s1 = get_true_unique_site_count('s1|gtpu')
+    count_cell = get_true_unique_site_count('cell|outage|shutdown|inter')
+    count_vswr = get_true_unique_site_count('vswr|antenna')
+    count_temp = get_true_unique_site_count('temp|temperature')
 else:
     count_s1, count_cell, count_vswr, count_temp = 0, 0, 0, 0
 
@@ -282,7 +289,7 @@ if df_dapot is not None:
                 
                 df_active_base = df_dapot[df_dapot['NOP'] == selected_nop].copy()
                 
-                # Filter Spesifik berdasarkan All_Alarms murni di Master yang sudah unik per site
+                # Filter Spesifik berdasarkan All_Alarms murni di Master
                 is_spesifik_filtered = f_s1 or f_cell or f_vswr or f_temp
                 if is_spesifik_filtered:
                     mask_sp = pd.Series(False, index=df_active_base.index)
