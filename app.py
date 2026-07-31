@@ -85,7 +85,7 @@ if df_ume is not None and not df_ume.empty and 'Occurrence Time' in df_ume.colum
     last_update_str = latest_time.strftime("%d-%m-%Y %H:%M:%S") if pd.notnull(latest_time) else "Tidak diketahui"
 else: last_update_str = "Belum Ada Data"
 
-# --- 4.5. PROSES MAPPING & ANTI-DUPLICATE MASTER ---
+# --- 4.5. PROSES MAPPING & ANTI-DUPLICATE MASTER & UME ---
 all_alarm_dict = {}
 min_occurrence = {}
 
@@ -106,7 +106,7 @@ if df_dapot is not None and not df_dapot.empty:
     df_dapot['C3'] = df_dapot['Site_Name'].astype(str).apply(get_6digit_id) if 'Site_Name' in df_dapot.columns else pd.Series([""] * len(df_dapot))
     df_dapot['NE_CLEAN'] = df_dapot.apply(lambda row: str(row.get('C2') or row.get('C3') or row.get('C1') or "").strip(), axis=1)
 
-    # Bersihkan duplikat di Master
+    # Bersihkan duplikat di Master (1 Site ID murni = 1 Baris)
     df_dapot = df_dapot[df_dapot['NE_CLEAN'] != ''].copy()
     df_dapot.drop_duplicates(subset=['NE_CLEAN'], keep='first', inplace=True)
 
@@ -193,28 +193,19 @@ if df_ume is not None and not df_ume.empty:
         c_down = df_dapot['C2'].isin(down_ids) | df_dapot['C3'].isin(down_ids) | df_dapot['C1'].isin(down_ids)
         df_dapot.loc[c_down, 'Status'] = 'Down'
 
-# 🔥 DEEP CHECK FIX: PENGHITUNGAN MURNI ID SITE UNIK DARI RAW DATA UME LANGSUNG
-if df_ume is not None and not df_ume.empty and df_dapot is not None:
-    valid_master_ids = set(df_dapot['NE_CLEAN'].dropna())
+# 🔥 SOLUSI UTAMA: MENGHITUNG MURNI JUMLAH UNIQUE SITE DI DF_DAPOT YANG COCOK DENGAN KATA KUNCI ALARM
+if df_dapot is not None and not df_dapot.empty and 'All_Alarms' in df_dapot.columns:
+    def get_real_unique_site_count(pattern):
+        # Cari baris master site yang All_Alarms-nya mengandung pola string alarm tersebut
+        matched = df_dapot[df_dapot['All_Alarms'].str.contains(pattern, case=False, na=False)]
+        if matched.empty: return 0
+        # Karena df_dapot sudah di-drop_duplicates per NE_CLEAN, maka cukup hitung jumlah barisnya langsung!
+        return len(matched)
 
-    def get_strict_unique_site_count(pattern):
-        mask = pd.Series(False, index=df_ume.index)
-        if 'Alarm Code Name' in df_ume.columns:
-            mask |= df_ume['Alarm Code Name'].astype(str).str.contains(pattern, case=False, na=False)
-        if 'Specific Problem' in df_ume.columns:
-            mask |= df_ume['Specific Problem'].astype(str).str.contains(pattern, case=False, na=False)
-        
-        # Ambil baris UME yang match, ekstrak ID-nya, filter yang beneran ada di Master, lalu .nunique()
-        sub_ume = df_ume[mask].copy()
-        if sub_ume.empty: return 0
-        sub_ume['Target_ID'] = sub_ume.apply(lambda r: str(r.get('V2') or r.get('V1') or "").strip(), axis=1)
-        sub_ume = sub_ume[sub_ume['Target_ID'].isin(valid_master_ids)]
-        return sub_ume['Target_ID'].nunique()
-
-    count_s1 = get_strict_unique_site_count('s1 link|s1-gtpu')
-    count_cell = get_strict_unique_site_count('cell outage|cell shutdown|cell inter')
-    count_vswr = get_strict_unique_site_count('vswr|antenna standing')
-    count_temp = get_strict_unique_site_count('high temp')
+    count_s1 = get_real_unique_site_count('s1 link|s1-gtpu')
+    count_cell = get_real_unique_site_count('cell outage|cell shutdown|cell inter')
+    count_vswr = get_real_unique_site_count('vswr|antenna standing')
+    count_temp = get_real_unique_site_count('high temp')
 else:
     count_s1, count_cell, count_vswr, count_temp = 0, 0, 0, 0
 
