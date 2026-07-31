@@ -19,6 +19,7 @@ def set_status(status):
     else:
         st.session_state.status_filter = status
 
+# CSS untuk menyembunyikan tulisan loading (stStatusWidget) agar klik terasa instan
 st.markdown("""
     <style>
         .block-container { padding-top: 1.5rem; padding-bottom: 2rem; padding-left: 2rem; padding-right: 2rem; max-width: 100%; }
@@ -27,7 +28,8 @@ st.markdown("""
         footer { visibility: hidden; }
         .stTabs [data-baseweb="tab-list"] { gap: 8px; }
         .st-emotion-cache-1y4p8pa { padding-top: 0rem; }
-        .update-info { text-align: right; font-size: 13px; color: #555; margin-bottom: 8px; }
+        .update-info { text-align: right; font-size: 13px; color: #555; margin-bottom: 8px; margin-top: -5px;}
+        [data-testid="stStatusWidget"] {visibility: hidden;} 
     </style>
 """, unsafe_allow_html=True)
 
@@ -69,56 +71,66 @@ def get_6digit_id(text):
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- 4. TARIK DATA DARI DATABASE ---
-with st.spinner('⏳ Sedang menyinkronkan data dengan sistem...'):
-    try: df_dapot = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet=1, sql="SELECT *", ttl=300)
-    except Exception as e: st.error(f"Gagal menarik data site: {e}"); df_dapot = None
-        
-    try: df_ume = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet=0, sql="SELECT *", ttl=300)
-    except Exception as e: st.error(f"Gagal menarik data alarm: {e}"); df_ume = pd.DataFrame()
+# --- 4. TARIK DATA DARI DATABASE (Tanpa Spinner agar Instan saat Rerun) ---
+try: df_dapot = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet=1, sql="SELECT *", ttl=300)
+except Exception as e: st.error(f"Gagal menarik data site: {e}"); df_dapot = None
+    
+try: df_ume = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet=0, sql="SELECT *", ttl=300)
+except Exception as e: st.error(f"Gagal menarik data alarm: {e}"); df_ume = pd.DataFrame()
 
 if df_ume is not None and not df_ume.empty and 'Occurrence Time' in df_ume.columns:
     latest_time = pd.to_datetime(df_ume['Occurrence Time'], errors='coerce').max()
     last_update_str = latest_time.strftime("%d-%m-%Y %H:%M:%S") if pd.notnull(latest_time) else "Tidak diketahui"
 else: last_update_str = "Belum Ada Data"
 
-# --- 5. HEADER & UPLOAD ---
-col_title, col_header_right = st.columns([2.5, 1])
+# --- 5. HEADER & TOOLBAR UPLOAD & FILTER SPESIFIK ---
+col_title, col_header_right = st.columns([2.2, 1.8])
 with col_title: st.title("🗺️ Site Down Monitoring Kalimantan (ZTE Only)")
 with col_header_right:
-    st.markdown(f"<div class='update-info'>Pembaruan Data Terakhir:<br><b style='color:#1a73e8;'>{last_update_str}</b></div>", unsafe_allow_html=True)
-    with st.popover("⚙️ KLIK DI SINI UNTUK UPDATE DATA", use_container_width=True):
-        st.markdown("""
-        **Cara Update Data Alarm:**
-        1. Login ke UME ZTE ([klik di sini](https://10.40.48.9:28001/uportal/framework/default.html#/home))
-        2. Pilih menu **Alarm Management > Active Alarm > Alarm Monitor > Klik Export > Export All**
-        3. Drag n Drop isi filenya di sini, dan tunggu beberapa saat
-        """)
-        ume_file_top = st.file_uploader("Pilih file (Excel/CSV)", type=['xlsx', 'csv'], label_visibility="collapsed")
-        if st.button("🔄 Reload Data / Clear Cache", use_container_width=True, type="primary"):
-            st.cache_data.clear(); conn.reset(); st.rerun()
+    st.markdown(f"<div class='update-info'>Pembaruan Data Terakhir: <b style='color:#1a73e8;'>{last_update_str}</b></div>", unsafe_allow_html=True)
+    c_f, c_u = st.columns(2)
+    
+    with c_f:
+        with st.popover("🔍 Filter Spesifik", use_container_width=True):
+            st.markdown("**Site dengan Alarm:**")
+            f_s1 = st.checkbox("S1-GTPU / S1 Link Broken")
+            f_cell = st.checkbox("Cell Down (Outage/Shutdown/Interruption)")
+            f_vswr = st.checkbox("VSWR (Antenna Standing)")
+            f_temp = st.checkbox("High Temp")
             
-        if ume_file_top:
-            if "last_uploaded" not in st.session_state or st.session_state["last_uploaded"] != ume_file_top.name:
-                with st.spinner("Menyimpan data..."):
-                    try:
-                        df_new = pd.read_csv(ume_file_top) if ume_file_top.name.endswith('.csv') else pd.read_excel(ume_file_top)
-                        valid_cols = [c for c in KOLOM_MASTER if c in df_new.columns]
-                        if valid_cols: df_new = df_new[valid_cols]
-                        df_new = df_new.dropna(how='all')
-                        if 'Occurrence Time' in df_new.columns: df_new['Occurrence Time'] = df_new['Occurrence Time'].astype(str)
-                        conn.update(spreadsheet=MASTER_SHEET_URL, worksheet=0, data=df_new)
-                        st.cache_data.clear(); conn.reset() 
-                        st.session_state["last_uploaded"] = ume_file_top.name
-                        st.success("✅ Berhasil. Klik Reload Data.")
-                    except Exception as e: st.error(f"Gagal: {e}")
+    with c_u:
+        with st.popover("⚙️ Update Data", use_container_width=True):
+            st.markdown("""
+            **Cara Update Data:**
+            1. Login UME ZTE ([Klik Disini](https://10.40.48.9:28001/uportal/framework/default.html#/home))
+            2. **Alarm Management > Active Alarm > Alarm Monitor > Export All**
+            3. Drag n Drop filenya di bawah ini:
+            """)
+            ume_file_top = st.file_uploader("Pilih file (Excel/CSV)", type=['xlsx', 'csv'], label_visibility="collapsed")
+            if st.button("🔄 Reload / Clear Cache", use_container_width=True, type="primary"):
+                st.cache_data.clear(); conn.reset(); st.rerun()
+                
+            if ume_file_top:
+                if "last_uploaded" not in st.session_state or st.session_state["last_uploaded"] != ume_file_top.name:
+                    with st.spinner("Menyimpan..."):
+                        try:
+                            df_new = pd.read_csv(ume_file_top) if ume_file_top.name.endswith('.csv') else pd.read_excel(ume_file_top)
+                            valid_cols = [c for c in KOLOM_MASTER if c in df_new.columns]
+                            if valid_cols: df_new = df_new[valid_cols]
+                            df_new = df_new.dropna(how='all')
+                            if 'Occurrence Time' in df_new.columns: df_new['Occurrence Time'] = df_new['Occurrence Time'].astype(str)
+                            conn.update(spreadsheet=MASTER_SHEET_URL, worksheet=0, data=df_new)
+                            st.cache_data.clear(); conn.reset() 
+                            st.session_state["last_uploaded"] = ume_file_top.name
+                            st.success("✅ Berhasil. Klik Reload.")
+                        except Exception as e: st.error(f"Gagal: {e}")
 
 st.markdown("<hr style='margin: 0px 0px 15px 0px;'/>", unsafe_allow_html=True)
 
 # --- 6. PROSES DATA ---
 if df_dapot is not None:
     if df_ume.empty or len(df_ume) == 0:
-        st.warning("⚠️ **Database alarm masih kosong atau belum dimuat!** Silakan unggah data alarm pada menu di pojok kanan atas.")
+        st.warning("⚠️ **Database alarm masih kosong atau belum dimuat!**")
     else:
         try:
             if 'Occurrence Time' in df_ume.columns and 'Alarm Code Name' in df_ume.columns:
@@ -147,6 +159,12 @@ if df_dapot is not None:
             cond_pow, cond_l1, cond_l2 = pd.Series(False, index=df_ume.index), pd.Series(False, index=df_ume.index), pd.Series(False, index=df_ume.index)
             cond_pot = pd.Series(False, index=df_ume.index)
             
+            # Mask untuk Filter Alarm Spesifik
+            s1_mask = pd.Series(False, index=df_ume.index)
+            cell_mask = pd.Series(False, index=df_ume.index)
+            vswr_mask = pd.Series(False, index=df_ume.index)
+            temp_mask = pd.Series(False, index=df_ume.index)
+            
             if 'Alarm Code Name' in df_ume.columns:
                 cond_pow = df_ume['Alarm Code Name'].astype(str).str.contains('Input power-off', case=False, na=False)
                 if 'Position' in df_ume.columns: cond_pow = cond_pow & (df_ume['Position'].astype(str).str.strip() == 'Equipment=1')
@@ -154,10 +172,32 @@ if df_dapot is not None:
                 cond_l2 = df_ume['Alarm Code Name'].astype(str).str.contains('Site Abis control link broken', case=False, na=False)
                 cond_pot = df_ume['Alarm Code Name'].astype(str).str.contains('mains|ac fail|battery|low batt', case=False, na=False)
                 
+                s1_mask = df_ume['Alarm Code Name'].str.contains('s1 link|s1-gtpu', case=False, na=False)
+                cell_mask = df_ume['Alarm Code Name'].str.contains('cell outage|cell shutdown|cell inter', case=False, na=False)
+                vswr_mask = df_ume['Alarm Code Name'].str.contains('vswr|antenna standing', case=False, na=False)
+                temp_mask = df_ume['Alarm Code Name'].str.contains('high temp', case=False, na=False)
+
             if 'Specific Problem' in df_ume.columns:
                 cond_l1 = cond_l1 | df_ume['Specific Problem'].astype(str).str.contains('The link between the server and the ME is broken', case=False, na=False)
                 cond_l2 = cond_l2 | df_ume['Specific Problem'].astype(str).str.contains('Site Abis control link broken', case=False, na=False)
                 cond_pot = cond_pot | df_ume['Specific Problem'].astype(str).str.contains('mains|ac fail|battery|low batt', case=False, na=False)
+                
+                s1_mask = s1_mask | df_ume['Specific Problem'].str.contains('s1 link|s1-gtpu', case=False, na=False)
+                cell_mask = cell_mask | df_ume['Specific Problem'].str.contains('cell outage|cell shutdown|cell inter', case=False, na=False)
+                vswr_mask = vswr_mask | df_ume['Specific Problem'].str.contains('vswr|antenna standing', case=False, na=False)
+                temp_mask = temp_mask | df_ume['Specific Problem'].str.contains('high temp', case=False, na=False)
+
+            # Ekstrak ID untuk Filter Spesifik
+            def get_ids_by_mask(mask):
+                res = set()
+                if 'V1' in df_ume.columns: res.update(df_ume.loc[mask, 'V1'].dropna())
+                if 'V2' in df_ume.columns: res.update(df_ume.loc[mask, 'V2'].dropna())
+                return {str(x).strip() for x in res if pd.notnull(x) and str(x).strip() != ''}
+                
+            ids_s1 = get_ids_by_mask(s1_mask)
+            ids_cell = get_ids_by_mask(cell_mask)
+            ids_vswr = get_ids_by_mask(vswr_mask)
+            ids_temp = get_ids_by_mask(temp_mask)
 
             df_down = df_ume[cond_pow | cond_l1 | cond_l2].copy()
             df_pot_raw = df_ume[cond_pot & ~(cond_pow | cond_l1 | cond_l2)].copy()
@@ -251,11 +291,22 @@ if df_dapot is not None:
                 
                 df_active_base = df_dapot[df_dapot['NOP'] == selected_nop].copy()
                 
+                # Integrasi Filter Spesifik ke DataFrame Active
+                active_spesifik_ids = set()
+                is_spesifik_filtered = False
+                if f_s1: active_spesifik_ids.update(ids_s1); is_spesifik_filtered = True
+                if f_cell: active_spesifik_ids.update(ids_cell); is_spesifik_filtered = True
+                if f_vswr: active_spesifik_ids.update(ids_vswr); is_spesifik_filtered = True
+                if f_temp: active_spesifik_ids.update(ids_temp); is_spesifik_filtered = True
+
+                if is_spesifik_filtered:
+                    mask_sp = df_active_base['C1'].isin(active_spesifik_ids) | df_active_base['C2'].isin(active_spesifik_ids) | df_active_base['C3'].isin(active_spesifik_ids)
+                    df_active_base = df_active_base[mask_sp]
+                
                 up_cnt = len(df_active_base[df_active_base['Status'] == 'Up'])
                 pot_cnt = len(df_active_base[df_active_base['Status'] == 'Potential Down'])
                 down_cnt = len(df_active_base[df_active_base['Status'] == 'Down'])
                 
-                st.write("<span style='font-size:12px; color:gray;'>*💡 Klik kotak status di bawah untuk mengisolasi data di Peta & Tabel*</span>", unsafe_allow_html=True)
                 c1, c2, c3 = st.columns(3)
                 with c1:
                     btn_up = st.button(f"✅ Up: {up_cnt}", type="primary" if st.session_state.status_filter == 'Up' else "secondary", use_container_width=True, on_click=set_status, args=('Up',))
@@ -295,7 +346,8 @@ if df_dapot is not None:
                     st.info(f"📍 Area **{selected_nop}** - Filter: **{filter_col} ({filter_val})** (Tombol 🗂️ di peta untuk Legend & Toggles)")
                 else:
                     status_text = f" ({st.session_state.status_filter})" if st.session_state.status_filter != 'All' else ""
-                    st.info(f"📍 Seluruh Area **{selected_nop}**{status_text} (Tombol 🗂️ di peta untuk Legend & Toggles)")
+                    sp_text = " (Filter Spesifik Aktif)" if is_spesifik_filtered else ""
+                    st.info(f"📍 Seluruh Area **{selected_nop}**{status_text}{sp_text} (Tombol 🗂️ di peta untuk Legend)")
                 
                 suggestion_site_ids, suggested_up_ids = {}, set()
                 df_up_strict = df_dapot[(df_dapot['Status'] == 'Up') & df_dapot['LAT'].notna() & df_dapot['LONG'].notna()]
@@ -321,7 +373,7 @@ if df_dapot is not None:
                         fg_id = folium.FeatureGroup(name="<span style='color:black; font-size:12px;'>🏷️</span> <b>Tampilkan ID Map</b>", show=False)
                         fg_hub = folium.FeatureGroup(name="<span style='color:#444; font-size:16px;'>★</span> <b>Penanda Hub Site</b>", show=True)
                         
-                        if (filter_col and filter_val) or st.session_state.status_filter != 'All':
+                        if (filter_col and filter_val) or st.session_state.status_filter != 'All' or is_spesifik_filtered:
                             min_lat, max_lat, min_lon, max_lon = df_map['LAT'].min(), df_map['LAT'].max(), df_map['LONG'].min(), df_map['LONG'].max()
                             if min_lat == max_lat: min_lat -= 0.02; max_lat += 0.02
                             if min_lon == max_lon: min_lon -= 0.02; max_lon += 0.02
