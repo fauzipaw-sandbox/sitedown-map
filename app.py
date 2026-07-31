@@ -249,7 +249,7 @@ if df_dapot is not None:
                 
                 c1, c2, c3 = st.columns(3)
                 c1.success(f"✅ **Up:** {up_cnt}")
-                c2.warning(f"⚠️ **Potential:** {pot_cnt}")
+                c2.warning(f"⚠️ **Potential Down:** {pot_cnt}")
                 c3.error(f"🚨 **Down:** {down_cnt}")
                 
                 tab1, tab2, tab3, tab4 = st.tabs(["Kabupaten", "Kecamatan", "Site Class", "Hub/Non Hub"])
@@ -294,14 +294,11 @@ if df_dapot is not None:
                         m = folium.Map(location=[df_map['LAT'].mean(), df_map['LONG'].mean()], zoom_start=10, control_scale=True)
                         folium.TileLayer(tiles='https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', attr='Google', name='Google Satellite').add_to(m)
                         
-                        # --- UNIFIED LAYER CONTROL (Mencakup Toggle dan Legend) ---
-                        # Diset collapsed=True agar otomatis ngumpet (responsive dan irit tempat di HP)
                         fg_down = folium.FeatureGroup(name="<span style='color:#e60000; font-size:12px;'>🔴</span> <b>Down</b>", show=True)
                         fg_pot = folium.FeatureGroup(name="<span style='color:#ff9900; font-size:12px;'>🟠</span> <b>Potential Down (<18h)</b>", show=True)
                         fg_up = folium.FeatureGroup(name="<span style='color:#00802b; font-size:12px;'>🟢</span> <b>Up</b>", show=True)
                         fg_rec = folium.FeatureGroup(name="<span style='color:#0066ff; font-size:12px;'>🔵</span> <b>Recommend to Optim</b>", show=False)
                         fg_id = folium.FeatureGroup(name="<span style='color:black; font-size:12px;'>🏷️</span> <b>Tampilkan ID Map</b>", show=False)
-                        # Layer Dummy khusus untuk info penanda Bintang Hub Site biar masuk di Legend
                         fg_hub = folium.FeatureGroup(name="<span style='color:#444; font-size:16px;'>★</span> <b>Penanda Hub Site</b>", show=True)
                         
                         if filter_col in ['Kota/Kab', 'Kecamatan'] and filter_val:
@@ -353,16 +350,17 @@ if df_dapot is not None:
                             
                             route_html_button = f'<hr style="margin: 4px 0;"><a href="{route_link}" target="_blank" style="display:block; text-align:center; background:#1a73e8; color:white; padding:4px; text-decoration:none; border-radius:4px; font-weight:bold; font-size:10px;">🔗 Buka Link Route</a>' if (pd.notnull(route_link) and str(route_link).strip() != "" and str(route_link).lower() != "nan") else ""
 
-                            # Perbaikan Popup Scroll: Diganti menjadi popup= yang bisa di-scroll dengan touch-action pan-y
+                            # --- TOOLTIP DIKEMBALIKAN (TANPA SCROLL) ---
+                            # Max-height dan overflow dihapus, font-size dan line-height dipadatkan untuk daftar alarm
                             html_detail = f"""
-                            <div style="width: 260px; font-size:11px; color:black; white-space: normal; line-height: 1.4;">
+                            <div style="width: 260px; font-size:11px; color:black; white-space: normal; line-height: 1.3;">
                                 <b style="font-size:13px;">{site_name}</b> <br>Site ID: <b>{site_id}</b><br>
                                 Status: {status_label}{durasi_str}<br><b>Class:</b> {site_class} | <b>Tipe:</b> {hub_status}<br>
                                 <b>Power:</b> {power_type} | <b>Grid:</b> {grid_type}<br><b>Transport:</b> {transport_type}<br>
                                 <b>Simpul 4G:</b> {simpul_4g}<br><b>Jumlah Anakan:</b> {jumlah_anakan} site<br>
                                 <b>Site ID Anakan:</b> <span style="word-break: break-all;">{site_id_anakan}</span>
                                 <hr style="margin: 4px 0;"><b style="font-size:10px;">Daftar Alarm:</b><br>
-                                <div style="font-size:10px; max-height:100px; overflow-y:auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; background:#f1f1f1; padding:4px; border-radius:4px;">
+                                <div style="font-size:9.5px; line-height:1.2; background:#f1f1f1; padding:4px; border-radius:4px;">
                                     {alarms_terkait}</div>{route_html_button}
                             </div>
                             """
@@ -370,12 +368,11 @@ if df_dapot is not None:
                             if is_hub: shape_html = f'<div style="color:{color_hex}; font-size:18px; margin-top:-4px; margin-left:-2px; text-shadow: -1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF, 0px 0px 4px rgba(0,0,0,0.6);">★</div>'
                             else: shape_html = f'<div style="width:12px; height:12px; background-color:{color_hex}; border:2px solid white; border-radius:50%; box-shadow:0px 0px 3px rgba(0,0,0,0.6);"></div>'
                             
-                            # Marker Utama menggunakan pop-up (bisa diclick dan scrollable) dan tooltip ringan
+                            # Revert back to Tooltip instead of Popup
                             folium.Marker(
                                 location=[lat, lon],
                                 icon=folium.DivIcon(html=f'<div style="position:relative; width:12px; height:12px;">{shape_html}</div>', icon_size=(12, 12), icon_anchor=(6, 6)),
-                                popup=folium.Popup(html_detail, max_width=280),
-                                tooltip=f"<b>{site_name}</b> (Klik detail)"
+                                tooltip=folium.Tooltip(html_detail)
                             ).add_to(target_layer)
                             
                             if ne_id in suggested_up_ids and status == 'Up' and ne_id.lower() not in ['', 'nan']:
@@ -383,22 +380,19 @@ if df_dapot is not None:
                                 folium.Marker(
                                     location=[lat, lon], 
                                     icon=folium.DivIcon(html=rec_html), 
-                                    popup=folium.Popup(html_detail, max_width=280),
-                                    tooltip=f"<b>{site_name}</b> (Klik detail)"
+                                    tooltip=folium.Tooltip(html_detail)
                                 ).add_to(fg_rec)
                             
                             label_html = f'<div style="position:absolute; left:14px; top:-2px; font-size:10px; font-weight:bold; color:{color_hex}; text-shadow:-1px -1px 0 #FFF,1px -1px 0 #FFF,-1px 1px 0 #FFF,1px 1px 0 #FFF,0px 0px 3px #FFF; white-space:nowrap;">{site_id}</div>'
                             folium.Marker(location=[lat, lon], icon=folium.DivIcon(html=f'<div style="position:relative; width:12px; height:12px;">{label_html}</div>', icon_size=(12, 12), icon_anchor=(6, 6))).add_to(fg_id)
 
-                        # Tambahkan layer-layer ke Peta
                         m.add_child(fg_down)
                         m.add_child(fg_pot)
                         m.add_child(fg_up)
                         m.add_child(fg_rec)
                         m.add_child(fg_id)
-                        m.add_child(fg_hub) # Layer dummy Legend masuk paling akhir
+                        m.add_child(fg_hub)
                         
-                        # Set collapsed=True biar legend tersembunyi rapi dan kebuka saat di-klik logo lapisannya
                         folium.LayerControl(position='topright', collapsed=True).add_to(m)
                         
                         st_folium(m, use_container_width=True, height=520, returned_objects=[])
