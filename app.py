@@ -193,19 +193,28 @@ if df_ume is not None and not df_ume.empty:
         c_down = df_dapot['C2'].isin(down_ids) | df_dapot['C3'].isin(down_ids) | df_dapot['C1'].isin(down_ids)
         df_dapot.loc[c_down, 'Status'] = 'Down'
 
-# 🔥 HITUNG JUMLAH SITE UNIQUE AKTUAL MENGGUNAKAN NUNIQUE PADA NE_CLEAN DI MASTER
-if df_dapot is not None and not df_dapot.empty and 'All_Alarms' in df_dapot.columns:
-    def get_true_unique_site_count(pattern):
-        # Filter baris master yang teks All_Alarms-nya mengandung pola alarm
-        matched_rows = df_dapot[df_dapot['All_Alarms'].str.contains(pattern, case=False, na=False)]
-        if matched_rows.empty: return 0
-        # Ambil NE_CLEAN lalu hitung jumlah unik (.nunique()) murni per site
-        return matched_rows['NE_CLEAN'].nunique()
+# 🔥 DEEP CHECK FIX: PENGHITUNGAN MURNI ID SITE UNIK DARI RAW DATA UME LANGSUNG
+if df_ume is not None and not df_ume.empty and df_dapot is not None:
+    valid_master_ids = set(df_dapot['NE_CLEAN'].dropna())
 
-    count_s1 = get_true_unique_site_count('s1|gtpu')
-    count_cell = get_true_unique_site_count('cell|outage|shutdown|inter')
-    count_vswr = get_true_unique_site_count('vswr|antenna')
-    count_temp = get_true_unique_site_count('temp|temperature')
+    def get_strict_unique_site_count(pattern):
+        mask = pd.Series(False, index=df_ume.index)
+        if 'Alarm Code Name' in df_ume.columns:
+            mask |= df_ume['Alarm Code Name'].astype(str).str.contains(pattern, case=False, na=False)
+        if 'Specific Problem' in df_ume.columns:
+            mask |= df_ume['Specific Problem'].astype(str).str.contains(pattern, case=False, na=False)
+        
+        # Ambil baris UME yang match, ekstrak ID-nya, filter yang beneran ada di Master, lalu .nunique()
+        sub_ume = df_ume[mask].copy()
+        if sub_ume.empty: return 0
+        sub_ume['Target_ID'] = sub_ume.apply(lambda r: str(r.get('V2') or r.get('V1') or "").strip(), axis=1)
+        sub_ume = sub_ume[sub_ume['Target_ID'].isin(valid_master_ids)]
+        return sub_ume['Target_ID'].nunique()
+
+    count_s1 = get_strict_unique_site_count('s1 link|s1-gtpu')
+    count_cell = get_strict_unique_site_count('cell outage|cell shutdown|cell inter')
+    count_vswr = get_strict_unique_site_count('vswr|antenna standing')
+    count_temp = get_strict_unique_site_count('high temp')
 else:
     count_s1, count_cell, count_vswr, count_temp = 0, 0, 0, 0
 
@@ -293,10 +302,10 @@ if df_dapot is not None:
                 is_spesifik_filtered = f_s1 or f_cell or f_vswr or f_temp
                 if is_spesifik_filtered:
                     mask_sp = pd.Series(False, index=df_active_base.index)
-                    if f_s1: mask_sp |= df_active_base['All_Alarms'].str.contains('s1|gtpu', case=False, na=False)
-                    if f_cell: mask_sp |= df_active_base['All_Alarms'].str.contains('cell|outage|shutdown|inter', case=False, na=False)
-                    if f_vswr: mask_sp |= df_active_base['All_Alarms'].str.contains('vswr|antenna', case=False, na=False)
-                    if f_temp: mask_sp |= df_active_base['All_Alarms'].str.contains('temp|temperature', case=False, na=False)
+                    if f_s1: mask_sp |= df_active_base['All_Alarms'].str.contains('s1 link|s1-gtpu', case=False, na=False)
+                    if f_cell: mask_sp |= df_active_base['All_Alarms'].str.contains('cell outage|cell shutdown|cell inter', case=False, na=False)
+                    if f_vswr: mask_sp |= df_active_base['All_Alarms'].str.contains('vswr|antenna standing', case=False, na=False)
+                    if f_temp: mask_sp |= df_active_base['All_Alarms'].str.contains('high temp', case=False, na=False)
                     df_active_base = df_active_base[mask_sp]
                 
                 up_cnt = len(df_active_base[df_active_base['Status'] == 'Up'])
