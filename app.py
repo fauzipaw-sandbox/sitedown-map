@@ -71,11 +71,13 @@ def get_6digit_id(text):
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- 4. TARIK DATA DARI DATABASE ---
-try: df_dapot = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet=1, sql="SELECT *", ttl=300)
+# --- 4. TARIK DATA DARI DATABASE (Dengan Cache Clear Paksa) ---
+st.cache_data.clear()
+
+try: df_dapot = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet=1, sql="SELECT *", ttl=0)
 except Exception as e: st.error(f"Gagal menarik data site: {e}"); df_dapot = None
     
-try: df_ume = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet=0, sql="SELECT *", ttl=300)
+try: df_ume = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet=0, sql="SELECT *", ttl=0)
 except Exception as e: st.error(f"Gagal menarik data alarm: {e}"); df_ume = pd.DataFrame()
 
 if df_ume is not None and not df_ume.empty and 'Occurrence Time' in df_ume.columns:
@@ -104,7 +106,7 @@ if df_dapot is not None and not df_dapot.empty:
     df_dapot['C3'] = df_dapot['Site_Name'].astype(str).apply(get_6digit_id) if 'Site_Name' in df_dapot.columns else pd.Series([""] * len(df_dapot))
     df_dapot['NE_CLEAN'] = df_dapot.apply(lambda row: str(row.get('C2') or row.get('C3') or row.get('C1') or "").strip(), axis=1)
 
-    # 🔥 HAPUS DUPLIKAT DI MASTER (1 Site ID murni = 1 Baris)
+    # 🔥 BERSIHKAN DUPLIKAT DI MASTER (1 Site ID murni = 1 Baris)
     df_dapot = df_dapot[df_dapot['NE_CLEAN'] != ''].copy()
     df_dapot.drop_duplicates(subset=['NE_CLEAN'], keep='first', inplace=True)
 
@@ -117,7 +119,6 @@ if df_ume is not None and not df_ume.empty:
     df_ume['V1'] = df_ume['ME ID'].apply(clean_id) if 'ME ID' in df_ume.columns else ""
     df_ume['V2'] = df_ume['Site Name(Office)'].apply(get_6digit_id) if 'Site Name(Office)' in df_ume.columns else ""
     
-    # Bikin Clean ID UME untuk Pemetaan Unik
     df_ume['UME_CLEAN'] = df_ume.apply(lambda row: str(row.get('V2') or row.get('V1') or "").strip(), axis=1)
     
     m1 = (df_ume['V1'] != '') & (df_ume['V1'].notna())
@@ -193,22 +194,31 @@ if df_ume is not None and not df_ume.empty:
         c_down = df_dapot['C2'].isin(down_ids) | df_dapot['C3'].isin(down_ids) | df_dapot['C1'].isin(down_ids)
         df_dapot.loc[c_down, 'Status'] = 'Down'
 
-# 🔥 HITUNG JUMLAH SITE UNIQUE AKTUAL LANGSUNG DARI RAW DATA UME (Bebas Duplikat Baris)
+# 🔥 HITUNG JUMLAH SITE UNIQUE AKTUAL MENGGUNAKAN DROPDOWN/NUNIQUE PADA ID SITE UME
 if df_ume is not None and not df_ume.empty:
-    def get_unique_site_count_by_alarm(pattern):
+    def get_strict_unique_site_count(pattern):
         mask = pd.Series(False, index=df_ume.index)
         if 'Alarm Code Name' in df_ume.columns:
             mask |= df_ume['Alarm Code Name'].astype(str).str.contains(pattern, case=False, na=False)
         if 'Specific Problem' in df_ume.columns:
             mask |= df_ume['Specific Problem'].astype(str).str.contains(pattern, case=False, na=False)
-        # Ambil UME_CLEAN yang valid lalu hitung .nunique() murni
-        valid_ids = df_ume.loc[mask, 'UME_CLEAN'].replace('', pd.NA).dropna()
-        return valid_ids.nunique()
+        
+        # Ambil baris UME yang kena alarm, lalu ambil daftar Site ID unik yang terdaftar di Master (df_dapot)
+        matched_ume = df_ume[mask]
+        if matched_ume.empty or df_dapot is None: return 0
+        
+        # Ekstraksi UME Clean ID dari baris yang match
+        matched_ume['Clean_Target'] = matched_ume.apply(lambda r: str(r.get('V2') or r.get('V1') or "").strip(), axis=1)
+        valid_matched_ids = matched_ume['Clean_Target'].replace('', pd.NA).dropna().unique()
+        
+        # Hitung irisan murni dengan NE_CLEAN di df_dapot (Pastikan benar-benar ada di master site)
+        intersection_sites = set(valid_matched_ids).intersection(set(df_dapot['NE_CLEAN'].dropna()))
+        return len(intersection_sites)
 
-    count_s1 = get_unique_site_count_by_alarm('s1 link|s1-gtpu')
-    count_cell = get_unique_site_count_by_alarm('cell outage|cell shutdown|cell inter')
-    count_vswr = get_unique_site_count_by_alarm('vswr|antenna standing')
-    count_temp = get_unique_site_count_by_alarm('high temp')
+    count_s1 = get_strict_unique_site_count('s1 link|s1-gtpu')
+    count_cell = get_strict_unique_site_count('cell outage|cell shutdown|cell inter')
+    count_vswr = get_strict_unique_site_count('vswr|antenna standing')
+    count_temp = get_strict_unique_site_count('high temp')
 else:
     count_s1, count_cell, count_vswr, count_temp = 0, 0, 0, 0
 
