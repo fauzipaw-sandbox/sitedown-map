@@ -111,13 +111,11 @@ if df_dapot is not None:
         st.warning("⚠️ **Database alarm masih kosong atau belum dimuat!** Silakan unggah data alarm pada menu di pojok kanan atas.")
     else:
         try:
-            # Format Alarm Details
             if 'Occurrence Time' in df_ume.columns and 'Alarm Code Name' in df_ume.columns:
                 df_ume['Alarm_Detail'] = "• " + df_ume['Alarm Code Name'].astype(str) + " (" + df_ume['Occurrence Time'].astype(str) + ")"
             elif 'Alarm Code Name' in df_ume.columns: df_ume['Alarm_Detail'] = "• " + df_ume['Alarm Code Name'].astype(str)
             else: df_ume['Alarm_Detail'] = "• Unknown Alarm"
             
-            # Map Alarms to IDs
             dict1, dict2 = {}, {}
             if 'ME ID' in df_ume.columns:
                 df_ume['V1'] = df_ume['ME ID'].apply(clean_id)
@@ -136,7 +134,7 @@ if df_dapot is not None:
                     if k in dict2: items.extend(dict2[k].split('<br>'))
                     all_alarm_dict[k] = "<br>".join(list(dict.fromkeys(items)))
 
-            # --- IDENTIFIKASI DOWN & POTENSIAL DOWN ---
+            # --- IDENTIFIKASI ALARM ---
             cond_pow, cond_l1, cond_l2 = pd.Series(False, index=df_ume.index), pd.Series(False, index=df_ume.index), pd.Series(False, index=df_ume.index)
             cond_pot = pd.Series(False, index=df_ume.index)
             
@@ -145,7 +143,6 @@ if df_dapot is not None:
                 if 'Position' in df_ume.columns: cond_pow = cond_pow & (df_ume['Position'].astype(str).str.strip() == 'Equipment=1')
                 cond_l1 = df_ume['Alarm Code Name'].astype(str).str.contains('The link between the server and the ME is broken', case=False, na=False)
                 cond_l2 = df_ume['Alarm Code Name'].astype(str).str.contains('Site Abis control link broken', case=False, na=False)
-                # Potensial: AC fail, Mains, Battery
                 cond_pot = df_ume['Alarm Code Name'].astype(str).str.contains('mains|ac fail|battery|low batt', case=False, na=False)
                 
             if 'Specific Problem' in df_ume.columns:
@@ -154,9 +151,20 @@ if df_dapot is not None:
                 cond_pot = cond_pot | df_ume['Specific Problem'].astype(str).str.contains('mains|ac fail|battery|low batt', case=False, na=False)
 
             df_down = df_ume[cond_pow | cond_l1 | cond_l2].copy()
-            df_pot = df_ume[cond_pot & ~(cond_pow | cond_l1 | cond_l2)].copy() # Cegah overlap
-            
-            # --- FUNGSI EKSTRAK ID BATCH ---
+            df_pot_raw = df_ume[cond_pot & ~(cond_pow | cond_l1 | cond_l2)].copy()
+
+            # 🔥 FILTER PREVENTIF: Potential Down HANYA VALID jika durasi alarm < 18 jam
+            now_wib = pd.Timestamp.now(tz='Asia/Jakarta').tz_localize(None)
+            if 'Occurrence Time' in df_pot_raw.columns:
+                df_pot_raw['Occ_DT'] = pd.to_datetime(df_pot_raw['Occurrence Time'], errors='coerce')
+                # Hitung selisih jam
+                df_pot_raw['Hours_Diff'] = (now_wib - df_pot_raw['Occ_DT']).dt.total_seconds() / 3600
+                # Filter murni alarm yang berumur di bawah 18 jam
+                df_pot = df_pot_raw[df_pot_raw['Hours_Diff'] < 18].copy()
+            else:
+                df_pot = df_pot_raw.copy()
+
+            # --- EKSTRAK ID BATCH & TIMESTAMP MINIMAL ---
             def extract_ids_and_time(df_source):
                 ids_raw = set(); min_occ = {}
                 if 'Occurrence Time' in df_source.columns:
@@ -180,7 +188,7 @@ if df_dapot is not None:
             down_ids, min_occ_down = extract_ids_and_time(df_down)
             pot_ids, min_occ_pot = extract_ids_and_time(df_pot)
             
-            min_occurrence = {**min_occ_pot, **min_occ_down} # Gabungkan timestamp (Down menimpa Potensial)
+            min_occurrence = {**min_occ_pot, **min_occ_down}
 
             # --- PENGKONDISIAN DAPOT ---
             if 'LAT' in df_dapot.columns and 'LONG' in df_dapot.columns:
@@ -202,10 +210,10 @@ if df_dapot is not None:
             
             df_dapot['NE_CLEAN'] = df_dapot.apply(lambda row: row.get('C2') or row.get('C3') or row.get('C1') or "", axis=1)
             
-            # Penetapan 3 Status
+            # Penetapan Status (Down mengalahkan Potential Down)
             df_dapot['Status'] = 'Up'
             c_pot = df_dapot['C2'].isin(pot_ids) | df_dapot['C3'].isin(pot_ids) | df_dapot['C1'].isin(pot_ids)
-            df_dapot.loc[c_pot, 'Status'] = 'Potensial Down'
+            df_dapot.loc[c_pot, 'Status'] = 'Potential Down'
             c_down = df_dapot['C2'].isin(down_ids) | df_dapot['C3'].isin(down_ids) | df_dapot['C1'].isin(down_ids)
             df_dapot.loc[c_down, 'Status'] = 'Down'
 
@@ -224,12 +232,12 @@ if df_dapot is not None:
             def get_summary_table(df_source, col_name):
                 if col_name not in df_source.columns: return pd.DataFrame()
                 summary = pd.crosstab(df_source[col_name], df_source['Status']).reset_index()
-                for s in ['Up', 'Down', 'Potensial Down']:
+                for s in ['Up', 'Down', 'Potential Down']:
                     if s not in summary.columns: summary[s] = 0
-                summary = summary.rename(columns={'Down': 'Jumlah Down', 'Up': 'Jumlah Up', 'Potensial Down': 'Jumlah Potensial'})
-                summary['Total'] = summary['Jumlah Down'] + summary['Jumlah Up'] + summary['Jumlah Potensial']
+                summary = summary.rename(columns={'Down': 'Jumlah Down', 'Up': 'Jumlah Up', 'Potential Down': 'Jumlah Potential'})
+                summary['Total'] = summary['Jumlah Down'] + summary['Jumlah Up'] + summary['Jumlah Potential']
                 summary['% Down'] = (summary['Jumlah Down'] / summary['Total'] * 100).round(1).astype(str) + '%'
-                return summary.sort_values('Jumlah Down', ascending=False).set_index(col_name)[['Jumlah Down', 'Jumlah Potensial', 'Jumlah Up', '% Down', 'Total']]
+                return summary.sort_values('Jumlah Down', ascending=False).set_index(col_name)[['Jumlah Down', 'Jumlah Potential', 'Jumlah Up', '% Down', 'Total']]
 
             # --- LAYOUT DUA KOLOM ---
             col_stats, col_map = st.columns([1.5, 2.5]) 
@@ -243,12 +251,12 @@ if df_dapot is not None:
                 st.write("") 
                 
                 up_cnt = len(df_active[df_active['Status'] == 'Up'])
-                pot_cnt = len(df_active[df_active['Status'] == 'Potensial Down'])
+                pot_cnt = len(df_active[df_active['Status'] == 'Potential Down'])
                 down_cnt = len(df_active[df_active['Status'] == 'Down'])
                 
                 c1, c2, c3 = st.columns(3)
                 c1.success(f"✅ **Up:** {up_cnt}")
-                c2.warning(f"⚠️ **Potensial:** {pot_cnt}")
+                c2.warning(f"⚠️ **Potential:** {pot_cnt}")
                 c3.error(f"🚨 **Down:** {down_cnt}")
                 
                 tab1, tab2, tab3, tab4 = st.tabs(["Kabupaten", "Kecamatan", "Site Class", "Hub/Non Hub"])
@@ -272,12 +280,11 @@ if df_dapot is not None:
                 df_map = df_active.copy()
                 if filter_col and filter_val:
                     df_map = df_map[df_map[filter_col] == filter_val]
-                    st.info(f"📍 Menampilkan Area **{selected_nop}** - Filter: **{filter_col} ({filter_val})** (Gunakan tombol 🗂️ di kanan atas peta untuk Toggles)")
+                    st.info(f"📍 Area **{selected_nop}** - Filter: **{filter_col} ({filter_val})**")
                 else:
-                    st.info(f"📍 Menampilkan Seluruh Area **{selected_nop}** (Gunakan tombol 🗂️ di kanan atas peta untuk Toggles)")
+                    st.info(f"📍 Seluruh Area **{selected_nop}**")
                 
                 suggestion_site_ids, suggested_up_ids = {}, set()
-                # Rekomendasi optimasi HANYA dari site yang bener-bener UP (bukan potensial mati)
                 df_up_strict = df_dapot[(df_dapot['Status'] == 'Up') & df_dapot['LAT'].notna() & df_dapot['LONG'].notna()]
                 
                 for idx, row in df_map[df_map['Status'] == 'Down'].iterrows():
@@ -294,12 +301,12 @@ if df_dapot is not None:
                         m = folium.Map(location=[df_map['LAT'].mean(), df_map['LONG'].mean()], zoom_start=10, control_scale=True)
                         folium.TileLayer(tiles='https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', attr='Google', name='Google Satellite').add_to(m)
                         
-                        # --- FEATURE GROUPS (Zero-Loading Toggles) ---
-                        fg_down = folium.FeatureGroup(name="<span style='color:red;'>🚨 Site Down</span>", show=True)
-                        fg_pot = folium.FeatureGroup(name="<span style='color:#ff9900;'>⚠️ Potensial Down</span>", show=True)
-                        fg_up = folium.FeatureGroup(name="<span style='color:green;'>✅ Site Up</span>", show=True)
-                        fg_rec = folium.FeatureGroup(name="<span style='color:#0066ff;'>🔄 Recommend to Optim</span>", show=False)
-                        fg_id = folium.FeatureGroup(name="🏷️ Tampilkan ID Map", show=False)
+                        # --- UNIFIED CONTROL (Legend & Toggles Disatukan di Kanan Atas) ---
+                        fg_down = folium.FeatureGroup(name="🔴 <b>Down</b>", show=True)
+                        fg_pot = folium.FeatureGroup(name="🟠 <b>Potential Down (<18h)</b>", show=True)
+                        fg_up = folium.FeatureGroup(name="🟢 <b>Up</b>", show=True)
+                        fg_rec = folium.FeatureGroup(name="🔵 <b>Recommend to Optim</b>", show=False)
+                        fg_id = folium.FeatureGroup(name="🏷️ <b>Tampilkan ID Map</b>", show=False)
                         
                         # Auto Zoom
                         if filter_col in ['Kota/Kab', 'Kecamatan'] and filter_val:
@@ -308,22 +315,6 @@ if df_dapot is not None:
                             if min_lon == max_lon: min_lon -= 0.02; max_lon += 0.02
                             m.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]])
 
-                        legend_html = '''
-                        <div style="position: fixed; bottom: 20px; left: 20px; width: 200px; height: auto; 
-                                    border:1px solid #ccc; z-index:9999; font-size:10px; color:black;
-                                    background-color: rgba(255, 255, 255, 0.85); padding: 8px; border-radius: 5px; 
-                                    box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-                        <b style="color:black; font-size:11px;">Legend</b><br>
-                        <div style="margin-top: 4px; line-height: 1.5;">
-                            <i style="background:#e60000; width: 10px; height: 10px; float: left; margin-right: 6px; margin-top: 2px; border-radius: 50%;"></i> <span style="color:black;">Down</span><br>
-                            <i style="background:#ff9900; width: 10px; height: 10px; float: left; margin-right: 6px; margin-top: 2px; border-radius: 50%;"></i> <span style="color:black;">Potensial Down (Mains/Batt)</span><br>
-                            <i style="background:#00802b; width: 10px; height: 10px; float: left; margin-right: 6px; margin-top: 2px; border-radius: 50%;"></i> <span style="color:black;">Up</span><br>
-                            <i style="background:#0066ff; width: 10px; height: 10px; float: left; margin-right: 6px; margin-top: 2px; border-radius: 50%;"></i> <span style="color:black;">Recommend to Optim crowd</span><br>
-                            <div style="color:#444; font-size:14px; float:left; margin-right:5px; margin-top:-4px; margin-left:-2px;">★</div> <span style="color:black;">Hub site</span><br>
-                        </div></div>
-                        '''
-                        m.get_root().html.add_child(folium.Element(legend_html))
-                        
                         for idx, row in df_map.iterrows():
                             lat, lon = row['LAT'], row['LONG']
                             site_id = row.get('Site_ID', 'Unknown')
@@ -349,11 +340,10 @@ if df_dapot is not None:
                             site_id_anakan = row[col_id_anakan] if col_id_anakan and pd.notnull(row[col_id_anakan]) else '-'
                             route_link = row.get('Route', row.get('Link_Route', ''))
                             
-                            # Targeting Layer & Colors
                             if status == 'Down':
                                 color_hex, status_label, target_layer = '#e60000', '<b style="color:red;">Down</b>', fg_down
-                            elif status == 'Potensial Down':
-                                color_hex, status_label, target_layer = '#ff9900', '<b style="color:orange;">Potensial Down (Power/Batt)</b>', fg_pot
+                            elif status == 'Potential Down':
+                                color_hex, status_label, target_layer = '#ff9900', '<b style="color:orange;">Potential Down (Mains/Batt <18h)</b>', fg_pot
                             else:
                                 color_hex, status_label, target_layer = '#00802b', '<b style="color:green;">Up</b>', fg_up
 
@@ -364,7 +354,7 @@ if df_dapot is not None:
                             for c_k in [row['C2'], row['C3'], row['C1']]:
                                 if c_k and c_k in min_occurrence: start_dt = min_occurrence[c_k]; break
 
-                            durasi_str = f" (Durasi: {format_durasi(start_dt)})" if (status in ['Down', 'Potensial Down'] and start_dt) else ""
+                            durasi_str = f" (Durasi: {format_durasi(start_dt)})" if (status in ['Down', 'Potential Down'] and start_dt) else ""
                             
                             route_html_button = f'<hr style="margin: 4px 0;"><a href="{route_link}" target="_blank" style="display:block; text-align:center; background:#1a73e8; color:white; padding:4px; text-decoration:none; border-radius:4px; font-weight:bold; font-size:10px;">🔗 Buka Link Route</a>' if (pd.notnull(route_link) and str(route_link).strip() != "" and str(route_link).lower() != "nan") else ""
 
@@ -384,19 +374,19 @@ if df_dapot is not None:
                             if is_hub: shape_html = f'<div style="color:{color_hex}; font-size:18px; margin-top:-4px; margin-left:-2px; text-shadow: -1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF, 0px 0px 4px rgba(0,0,0,0.6);">★</div>'
                             else: shape_html = f'<div style="width:12px; height:12px; background-color:{color_hex}; border:2px solid white; border-radius:50%; box-shadow:0px 0px 3px rgba(0,0,0,0.6);"></div>'
                             
-                            # Draw Base Marker
+                            # Base Marker
                             folium.Marker(
                                 location=[lat, lon],
                                 icon=folium.DivIcon(html=f'<div style="position:relative; width:12px; height:12px;">{shape_html}</div>', icon_size=(12, 12), icon_anchor=(6, 6)),
                                 tooltip=folium.Tooltip(html_detail)
                             ).add_to(target_layer)
                             
-                            # Draw Recommend to Optim Overlay (Hanya nyala via Toggle Maps)
+                            # Recommend to Optim Overlay
                             if ne_id in suggested_up_ids and status == 'Up' and ne_id.lower() not in ['', 'nan']:
                                 rec_html = f'<div style="position:relative; width:16px; height:16px; margin-top:-2px; margin-left:-2px;"><div style="width:16px; height:16px; background-color:#0066ff; border:2px solid white; border-radius:50%; box-shadow:0px 0px 4px rgba(0,0,0,0.8);"></div></div>'
                                 folium.Marker(location=[lat, lon], icon=folium.DivIcon(html=rec_html), tooltip=folium.Tooltip(html_detail)).add_to(fg_rec)
                             
-                            # Draw ID Text Overlay (Hanya nyala via Toggle Maps)
+                            # ID Text Overlay
                             label_html = f'<div style="position:absolute; left:14px; top:-2px; font-size:10px; font-weight:bold; color:{color_hex}; text-shadow:-1px -1px 0 #FFF,1px -1px 0 #FFF,-1px 1px 0 #FFF,1px 1px 0 #FFF,0px 0px 3px #FFF; white-space:nowrap;">{site_id}</div>'
                             folium.Marker(location=[lat, lon], icon=folium.DivIcon(html=f'<div style="position:relative; width:12px; height:12px;">{label_html}</div>', icon_size=(12, 12), icon_anchor=(6, 6))).add_to(fg_id)
 
@@ -407,7 +397,7 @@ if df_dapot is not None:
                         m.add_child(fg_rec)
                         m.add_child(fg_id)
                         
-                        # Layer Control ajaib (Zero Loading Streamlit)
+                        # Layer Control Terpadu (Legend + Toggle On/Off tanpa loading)
                         folium.LayerControl(position='topright', collapsed=False).add_to(m)
                         
                         st_folium(m, use_container_width=True, height=500, returned_objects=[])
