@@ -104,7 +104,7 @@ if df_dapot is not None and not df_dapot.empty:
     df_dapot['C3'] = df_dapot['Site_Name'].astype(str).apply(get_6digit_id) if 'Site_Name' in df_dapot.columns else pd.Series([""] * len(df_dapot))
     df_dapot['NE_CLEAN'] = df_dapot.apply(lambda row: str(row.get('C2') or row.get('C3') or row.get('C1') or "").strip(), axis=1)
 
-    # 🔥 BERSIHKAN DUPLIKAT DI MASTER (1 Site ID murni = 1 Baris)
+    # 🔥 HAPUS DUPLIKAT DI MASTER (1 Site ID murni = 1 Baris)
     df_dapot = df_dapot[df_dapot['NE_CLEAN'] != ''].copy()
     df_dapot.drop_duplicates(subset=['NE_CLEAN'], keep='first', inplace=True)
 
@@ -116,6 +116,9 @@ if df_ume is not None and not df_ume.empty:
     
     df_ume['V1'] = df_ume['ME ID'].apply(clean_id) if 'ME ID' in df_ume.columns else ""
     df_ume['V2'] = df_ume['Site Name(Office)'].apply(get_6digit_id) if 'Site Name(Office)' in df_ume.columns else ""
+    
+    # Bikin Clean ID UME untuk Pemetaan Unik
+    df_ume['UME_CLEAN'] = df_ume.apply(lambda row: str(row.get('V2') or row.get('V1') or "").strip(), axis=1)
     
     m1 = (df_ume['V1'] != '') & (df_ume['V1'].notna())
     dict1 = df_ume[m1].groupby('V1')['Alarm_Detail'].apply(lambda x: "<br>".join(x.unique())).to_dict()
@@ -129,14 +132,13 @@ if df_ume is not None and not df_ume.empty:
             if k in dict2: items.extend(dict2[k].split('<br>'))
             all_alarm_dict[k] = "<br>".join(list(dict.fromkeys(items)))
 
-    # Inject Gabungan Alarm ke df_dapot
     if df_dapot is not None and not df_dapot.empty:
         df_dapot['All_Alarms'] = df_dapot['C2'].map(all_alarm_dict)
         df_dapot['All_Alarms'] = df_dapot['All_Alarms'].fillna(df_dapot['C3'].map(all_alarm_dict))
         df_dapot['All_Alarms'] = df_dapot['All_Alarms'].fillna(df_dapot['C1'].map(all_alarm_dict))
         df_dapot['All_Alarms'] = df_dapot['All_Alarms'].fillna("")
 
-    # Logika Penentuan Down / Potential Down
+    # Logika Down / Potential Down
     cond_pow, cond_l1, cond_l2 = [pd.Series(False, index=df_ume.index)] * 3
     cond_pot = pd.Series(False, index=df_ume.index)
     
@@ -191,12 +193,22 @@ if df_ume is not None and not df_ume.empty:
         c_down = df_dapot['C2'].isin(down_ids) | df_dapot['C3'].isin(down_ids) | df_dapot['C1'].isin(down_ids)
         df_dapot.loc[c_down, 'Status'] = 'Down'
 
-# 🔥 HITUNG JUMLAH MURNI 1 SITE = 1 HITUNGAN DARI df_dapot YANG SUDAH BERSIH
-if df_dapot is not None and not df_dapot.empty and 'All_Alarms' in df_dapot.columns:
-    count_s1 = df_dapot['All_Alarms'].str.contains('s1 link|s1-gtpu', case=False, na=False).sum()
-    count_cell = df_dapot['All_Alarms'].str.contains('cell outage|cell shutdown|cell inter', case=False, na=False).sum()
-    count_vswr = df_dapot['All_Alarms'].str.contains('vswr|antenna standing', case=False, na=False).sum()
-    count_temp = df_dapot['All_Alarms'].str.contains('high temp', case=False, na=False).sum()
+# 🔥 HITUNG JUMLAH SITE UNIQUE AKTUAL LANGSUNG DARI RAW DATA UME (Bebas Duplikat Baris)
+if df_ume is not None and not df_ume.empty:
+    def get_unique_site_count_by_alarm(pattern):
+        mask = pd.Series(False, index=df_ume.index)
+        if 'Alarm Code Name' in df_ume.columns:
+            mask |= df_ume['Alarm Code Name'].astype(str).str.contains(pattern, case=False, na=False)
+        if 'Specific Problem' in df_ume.columns:
+            mask |= df_ume['Specific Problem'].astype(str).str.contains(pattern, case=False, na=False)
+        # Ambil UME_CLEAN yang valid lalu hitung .nunique() murni
+        valid_ids = df_ume.loc[mask, 'UME_CLEAN'].replace('', pd.NA).dropna()
+        return valid_ids.nunique()
+
+    count_s1 = get_unique_site_count_by_alarm('s1 link|s1-gtpu')
+    count_cell = get_unique_site_count_by_alarm('cell outage|cell shutdown|cell inter')
+    count_vswr = get_unique_site_count_by_alarm('vswr|antenna standing')
+    count_temp = get_unique_site_count_by_alarm('high temp')
 else:
     count_s1, count_cell, count_vswr, count_temp = 0, 0, 0, 0
 
@@ -280,7 +292,7 @@ if df_dapot is not None:
                 
                 df_active_base = df_dapot[df_dapot['NOP'] == selected_nop].copy()
                 
-                # Filter Spesifik berdasarkan All_Alarms murni di Master yang sudah bersih
+                # Filter Spesifik berdasarkan All_Alarms murni di Master
                 is_spesifik_filtered = f_s1 or f_cell or f_vswr or f_temp
                 if is_spesifik_filtered:
                     mask_sp = pd.Series(False, index=df_active_base.index)
