@@ -78,7 +78,7 @@ def get_6digit_id(text):
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- 5. TARIK DATA DARI DATABASE (Dilakukan di awal untuk mengambil waktu pembaruan) ---
+# --- 5. TARIK DATA DARI DATABASE ---
 with st.spinner('⏳ Sedang menyinkronkan data dengan sistem...'):
     try:
         df_dapot = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet=1, sql="SELECT *", ttl=300)
@@ -98,7 +98,7 @@ if df_ume is not None and not df_ume.empty and 'Occurrence Time' in df_ume.colum
 else:
     last_update_str = "Belum Ada Data"
 
-# --- 6. HEADER & EXPANDER UPDATE UTAMA (Posisi Pojok Kanan Atas & Kompak) ---
+# --- 6. HEADER & EXPANDER UPDATE UTAMA ---
 col_title, col_header_right = st.columns([2.5, 1])
 
 with col_title:
@@ -146,7 +146,6 @@ if df_dapot is not None:
         st.warning("⚠️ **Database alarm masih kosong atau belum dimuat!** Silakan unggah data alarm pada menu di pojok kanan atas.")
     else:
         try:
-            # --- VEKTORISASI DETAIL ALARM ---
             if 'Occurrence Time' in df_ume.columns and 'Alarm Code Name' in df_ume.columns:
                 df_ume['Alarm_Detail'] = "• " + df_ume['Alarm Code Name'].astype(str) + " (" + df_ume['Occurrence Time'].astype(str) + ")"
             elif 'Alarm Code Name' in df_ume.columns:
@@ -173,7 +172,6 @@ if df_dapot is not None:
                     if k in dict2: items.extend(dict2[k].split('<br>'))
                     all_alarm_dict[k] = "<br>".join(list(dict.fromkeys(items)))
 
-            # --- FILTER KHUSUS ALARM DOWN ---
             cond_pow, cond_l1, cond_l2 = pd.Series(False, index=df_ume.index), pd.Series(False, index=df_ume.index), pd.Series(False, index=df_ume.index)
             
             if 'Alarm Code Name' in df_ume.columns:
@@ -189,7 +187,6 @@ if df_dapot is not None:
 
             df_down = df_ume[cond_pow | cond_l1 | cond_l2].copy()
             
-            # --- DURASI & ID DOWN VALID ---
             down_ids_raw = set()
             min_occurrence = {}
             if 'Occurrence Time' in df_down.columns:
@@ -213,7 +210,6 @@ if df_dapot is not None:
 
             down_ids = {str(k).strip() for k in down_ids_raw if pd.notnull(k) and str(k).strip() != '' and str(k).strip().lower() not in ['nan', 'none']}
 
-            # --- PENGKONDISIAN DATA MASTER SITE (DAPOT) ---
             if 'LAT' in df_dapot.columns and 'LONG' in df_dapot.columns:
                 df_dapot['LAT'] = df_dapot['LAT'].astype(str).str.replace(',', '.').astype(float)
                 df_dapot['LONG'] = df_dapot['LONG'].astype(str).str.replace(',', '.').astype(float)
@@ -231,9 +227,7 @@ if df_dapot is not None:
             df_dapot['C2'] = df_dapot['Site_ID'].astype(str).apply(get_6digit_id) if 'Site_ID' in df_dapot.columns else pd.Series([""] * len(df_dapot))
             df_dapot['C3'] = df_dapot['Site_Name'].astype(str).apply(get_6digit_id) if 'Site_Name' in df_dapot.columns else pd.Series([""] * len(df_dapot))
             
-            def get_valid_ne(row):
-                return row.get('C2') or row.get('C3') or row.get('C1') or ""
-                
+            def get_valid_ne(row): return row.get('C2') or row.get('C3') or row.get('C1') or ""
             df_dapot['NE_CLEAN'] = df_dapot.apply(get_valid_ne, axis=1)
             
             cond_status = df_dapot['C2'].isin(down_ids) | df_dapot['C3'].isin(down_ids) | df_dapot['C1'].isin(down_ids)
@@ -265,14 +259,12 @@ if df_dapot is not None:
                 summary['% Up'] = (summary['Jumlah Up'] / summary['Total'] * 100).round(1).astype(str) + '%'
                 return summary.sort_values('Jumlah Down', ascending=False).set_index(col_name)[['Jumlah Down', 'Jumlah Up', '% Down', '% Up', 'Total']]
 
-            # --- LAYOUT DUA KOLOM UTAMA ---
             col_stats, col_map = st.columns([1.5, 2.5]) 
             
             with col_stats:
                 list_nop = sorted([str(x) for x in df_dapot['NOP'].dropna().unique() if str(x).strip() != ''])
                 idx_pal = next((i for i, v in enumerate(list_nop) if 'palangka' in str(v).lower()), 0)
                 
-                # NOP Dropdown dan Toggles disejajarkan
                 c_nop, c_tog1, c_tog2 = st.columns([2.5, 1, 1])
                 with c_nop:
                     selected_nop = st.selectbox("NOP", list_nop, index=idx_pal, label_visibility="collapsed")
@@ -282,8 +274,7 @@ if df_dapot is not None:
                     show_legend = st.toggle("Legenda", value=True)
                 
                 df_active = df_dapot[df_dapot['NOP'] == selected_nop].copy()
-                
-                st.write("") # Spasi tipis
+                st.write("") 
                 
                 up_cnt, down_cnt = len(df_active[df_active['Status'] == 'Up']), len(df_active[df_active['Status'] == 'Down'])
                 c1, c2 = st.columns(2)
@@ -336,9 +327,35 @@ if df_dapot is not None:
                     df_map = df_map.dropna(subset=['LAT', 'LONG'])
                     
                     if not df_map.empty:
-                        m = folium.Map(location=[df_map['LAT'].mean(), df_map['LONG'].mean()], zoom_start=10 if (filter_col and filter_val) else 9)
+                        m = folium.Map(location=[df_map['LAT'].mean(), df_map['LONG'].mean()], zoom_start=10)
                         folium.TileLayer(tiles='https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', attr='Google', name='Google Satellite').add_to(m)
                         
+                        # --- LOGIKA BOUNDING BOX (KOTAK ZONA AREA) & AUTO ZOOM ---
+                        if filter_col in ['Kota/Kab', 'Kecamatan'] and filter_val:
+                            min_lat, max_lat = df_map['LAT'].min(), df_map['LAT'].max()
+                            min_lon, max_lon = df_map['LONG'].min(), df_map['LONG'].max()
+                            
+                            # Kasih buffer/jarak aman kalau cuma ada 1 site biar auto-zoom gak terlalu nge-zoom sampai blur
+                            if min_lat == max_lat: min_lat -= 0.02; max_lat += 0.02
+                            if min_lon == max_lon: min_lon -= 0.02; max_lon += 0.02
+                            
+                            bounds = [[min_lat, min_lon], [max_lat, max_lon]]
+                            
+                            # Gambar kotak area berwarna
+                            folium.Rectangle(
+                                bounds=bounds,
+                                color='#1a73e8',
+                                fill=True,
+                                fill_color='#1a73e8',
+                                fill_opacity=0.08,
+                                weight=2,
+                                dash_array='5, 5',
+                                tooltip=f"Area Coverage: {filter_val}"
+                            ).add_to(m)
+                            
+                            # Auto-zoom peta menyesuaikan lebar kotak zona
+                            m.fit_bounds(bounds)
+
                         if show_legend:
                             legend_html = '''
                             <div style="position: fixed; bottom: 20px; left: 20px; width: 190px; height: 120px; 
@@ -400,7 +417,6 @@ if df_dapot is not None:
                             
                             route_html_button = f'<hr style="margin: 4px 0;"><a href="{route_link}" target="_blank" style="display:block; text-align:center; background:#1a73e8; color:white; padding:4px; text-decoration:none; border-radius:4px; font-weight:bold; font-size:10px;">🔗 Buka Link Route</a>' if (pd.notnull(route_link) and str(route_link).strip() != "" and str(route_link).lower() != "nan") else ""
 
-                            # Tooltip HTML dibalikin rapi normal, efek wrap murni cuma nempel ke bagian site_id_anakan
                             html_detail = f"""
                             <div style="width: 260px; font-size:11px; color:black; white-space: normal; line-height: 1.4;">
                                 <b style="font-size:13px;">{site_name}</b> <br>Site ID: <b>{site_id}</b><br>
@@ -429,7 +445,6 @@ if df_dapot is not None:
                     else:
                         st.warning("Tidak ada data site pada area yang dipilih.")
 
-            # --- BAGIAN BAWAH SCROLL ---
             st.divider()
             st.subheader("📋 Detail Site Down")
             
