@@ -71,7 +71,7 @@ def get_6digit_id(text):
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- 4. TARIK DATA DARI DATABASE (Force Reset Cache) ---
+# --- 4. TARIK DATA DARI DATABASE (Dengan Cache Clear Paksa) ---
 st.cache_data.clear()
 
 try: df_dapot = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet=1, sql="SELECT *", ttl=0)
@@ -220,7 +220,6 @@ with col_title: st.title("🗺️ Site Down Monitoring Kalimantan (ZTE Only)")
 with col_header_right:
     st.markdown(f"<div class='update-info'>Pembaruan Data Terakhir: <b style='color:#1a73e8;'>{last_update_str}</b></div>", unsafe_allow_html=True)
     
-    # Placeholder sementara sebelum NOP dipilih, nanti di-render ulang di bawah setelah NOP aktif
     c_f, c_u = st.columns(2)
     with c_f: popover_placeholder = st.empty()
     with c_u:
@@ -264,33 +263,47 @@ if df_dapot is not None:
                 idx_pal = next((i for i, v in enumerate(list_nop) if 'palangka' in str(v).lower()), 0)
                 selected_nop = st.selectbox("📌 Filter NOP", list_nop, index=idx_pal)
                 
-                # 🔥 FILTER NOP BERJALAN DULU AGAR COUNTER ALARM IKUT TERSARING SESUAI NOP YANG DIPILIH!
                 df_nop_filtered = df_dapot[df_dapot['NOP'] == selected_nop].copy()
 
-                # Hitung jumlah site unik khusus NOP yang aktif
+                # Hitung jumlah site unik khusus NOP yang aktif untuk semua kategori alarm
                 dyn_s1 = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['s1 link', 's1-gtpu']) else 0).sum()
                 dyn_cell = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['cell outage', 'cell shutdown', 'cell inter']) else 0).sum()
                 dyn_vswr = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['vswr', 'antenna standing']) else 0).sum()
                 dyn_temp = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['high temp']) else 0).sum()
+                
+                # 4 Alarm Baru yang Diminta
+                dyn_packet = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['packet loss', 'high packet loss']) else 0).sum()
+                dyn_sleeping = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['sleeping cell', 'sleeping']) else 0).sum()
+                dyn_rru_pwr = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['rru power abnormal', 'rru power']) else 0).sum()
+                dyn_rru_lnk = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['rru link interrupted', 'rru link']) else 0).sum()
 
-                # Render ulang popover filter alarm dengan angka dinamis sesuai NOP aktif
+                # Render ulang popover filter alarm dinamis
                 with popover_placeholder.popover("🔍 Filter Alarm", use_container_width=True):
                     st.markdown("<div style='font-size:13px; font-weight:bold; margin-bottom:10px;'>Pilih Kategori Alarm:</div>", unsafe_allow_html=True)
                     f_s1 = st.checkbox(f"**S1-GTPU / S1 Link Broken** - {dyn_s1} sites")
                     f_cell = st.checkbox(f"**Cell Down (Outage/Shutdown/Interruption)** - {dyn_cell} sites")
                     f_vswr = st.checkbox(f"**VSWR** - {dyn_vswr} sites")
                     f_temp = st.checkbox(f"**High Temp** - {dyn_temp} sites")
+                    f_packet = st.checkbox(f"**High Packet Loss** - {dyn_packet} sites")
+                    f_sleeping = st.checkbox(f"**Sleeping Cell** - {dyn_sleeping} sites")
+                    f_rru_pwr = st.checkbox(f"**RRU Power Abnormal** - {dyn_rru_pwr} sites")
+                    f_rru_lnk = st.checkbox(f"**RRU Link Interrupted** - {dyn_rru_lnk} sites")
                 
                 df_active_base = df_nop_filtered
                 
-                # Filter Spesifik berdasarkan All_Alarms murni per site unik di NOP tersebut
-                is_spesifik_filtered = f_s1 or f_cell or f_vswr or f_temp
+                # Filter Spesifik berdasarkan pilihan checkbox alarm aktif
+                is_spesifik_filtered = f_s1 or f_cell or f_vswr or f_temp or f_packet or f_sleeping or f_rru_pwr or f_rru_lnk
                 if is_spesifik_filtered:
                     mask_sp = pd.Series(False, index=df_active_base.index)
                     if f_s1: mask_sp |= df_active_base['All_Alarms'].apply(lambda x: any(w in str(x).lower() for w in ['s1 link', 's1-gtpu']))
                     if f_cell: mask_sp |= df_active_base['All_Alarms'].apply(lambda x: any(w in str(x).lower() for w in ['cell outage', 'cell shutdown', 'cell inter']))
                     if f_vswr: mask_sp |= df_active_base['All_Alarms'].apply(lambda x: any(w in str(x).lower() for w in ['vswr', 'antenna standing']))
                     if f_temp: mask_sp |= df_active_base['All_Alarms'].apply(lambda x: any(w in str(x).lower() for w in ['high temp']))
+                    if f_packet: mask_sp |= df_active_base['All_Alarms'].apply(lambda x: any(w in str(x).lower() for w in ['packet loss', 'high packet loss']))
+                    if f_sleeping: mask_sp |= df_active_base['All_Alarms'].apply(lambda x: any(w in str(x).lower() for w in ['sleeping cell', 'sleeping']))
+                    if f_rru_pwr: mask_sp |= df_active_base['All_Alarms'].apply(lambda x: any(w in str(x).lower() for w in ['rru power abnormal', 'rru power']))
+                    if f_rru_lnk: mask_sp |= df_active_base['All_Alarms'].apply(lambda x: any(w in str(x).lower() for w in ['rru link interrupted', 'rru link']))
+                    
                     df_active_base = df_active_base[mask_sp]
                 
                 up_cnt = len(df_active_base[df_active_base['Status'] == 'Up'])
