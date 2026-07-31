@@ -19,7 +19,7 @@ def set_status(status):
     else:
         st.session_state.status_filter = status
 
-# CSS untuk menyembunyikan tulisan loading (stStatusWidget) agar klik terasa instan
+# CSS Sihir: Menyembunyikan seluruh indikator loading Streamlit agar klik UI terasa instan (Zero-Loading)
 st.markdown("""
     <style>
         .block-container { padding-top: 1.5rem; padding-bottom: 2rem; padding-left: 2rem; padding-right: 2rem; max-width: 100%; }
@@ -29,7 +29,8 @@ st.markdown("""
         .stTabs [data-baseweb="tab-list"] { gap: 8px; }
         .st-emotion-cache-1y4p8pa { padding-top: 0rem; }
         .update-info { text-align: right; font-size: 13px; color: #555; margin-bottom: 8px; margin-top: -5px;}
-        [data-testid="stStatusWidget"] {visibility: hidden;} 
+        [data-testid="stStatusWidget"] {visibility: hidden; display: none !important;} 
+        .stProgress {display: none !important;}
     </style>
 """, unsafe_allow_html=True)
 
@@ -71,7 +72,7 @@ def get_6digit_id(text):
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- 4. TARIK DATA DARI DATABASE (Tanpa Spinner agar Instan saat Rerun) ---
+# --- 4. TARIK DATA DARI DATABASE (Tanpa Spinner Animasi) ---
 try: df_dapot = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet=1, sql="SELECT *", ttl=300)
 except Exception as e: st.error(f"Gagal menarik data site: {e}"); df_dapot = None
     
@@ -83,7 +84,67 @@ if df_ume is not None and not df_ume.empty and 'Occurrence Time' in df_ume.colum
     last_update_str = latest_time.strftime("%d-%m-%Y %H:%M:%S") if pd.notnull(latest_time) else "Tidak diketahui"
 else: last_update_str = "Belum Ada Data"
 
-# --- 5. HEADER & TOOLBAR UPLOAD & FILTER SPESIFIK ---
+# --- 4.5. PRE-CALCULATE ALARM MASK & COUNTER ---
+# Pra-kalkulasi ini dilakukan agar angkanya bisa langsung muncul di Top Toolbar
+if df_dapot is not None and not df_dapot.empty:
+    if 'LAT' in df_dapot.columns and 'LONG' in df_dapot.columns:
+        df_dapot['LAT'] = df_dapot['LAT'].astype(str).str.replace(',', '.').astype(float)
+        df_dapot['LONG'] = df_dapot['LONG'].astype(str).str.replace(',', '.').astype(float)
+
+    for col in ['Kota/Kab', 'Kecamatan']:
+        if col in df_dapot.columns: df_dapot[col] = df_dapot[col].apply(lambda x: str(x).title() if pd.notnull(x) else x)
+    if 'NOP' in df_dapot.columns:
+        df_dapot['NOP'] = df_dapot['NOP'].apply(lambda x: str(x).upper().replace('NOP', 'NOP') if pd.notnull(x) else x)
+
+    if 'Hub site' in df_dapot.columns: df_dapot['Hub site'] = df_dapot['Hub site'].fillna('Non Hub')
+    col_class = find_col(df_dapot, ['SITE CLASS', 'Site_Class', 'Site Class', 'Class'])
+    df_dapot['Site Class'] = df_dapot[col_class].fillna('-') if col_class else '-'
+
+    df_dapot['C1'] = df_dapot['NE ID'].apply(clean_id) if 'NE ID' in df_dapot.columns else pd.Series([""] * len(df_dapot))
+    df_dapot['C2'] = df_dapot['Site_ID'].astype(str).apply(get_6digit_id) if 'Site_ID' in df_dapot.columns else pd.Series([""] * len(df_dapot))
+    df_dapot['C3'] = df_dapot['Site_Name'].astype(str).apply(get_6digit_id) if 'Site_Name' in df_dapot.columns else pd.Series([""] * len(df_dapot))
+    df_dapot['NE_CLEAN'] = df_dapot.apply(lambda row: row.get('C2') or row.get('C3') or row.get('C1') or "", axis=1)
+
+ids_s1, ids_cell, ids_vswr, ids_temp = set(), set(), set(), set()
+count_s1, count_cell, count_vswr, count_temp = 0, 0, 0, 0
+
+if df_ume is not None and not df_ume.empty:
+    df_ume['V1'] = df_ume['ME ID'].apply(clean_id) if 'ME ID' in df_ume.columns else ""
+    df_ume['V2'] = df_ume['Site Name(Office)'].apply(get_6digit_id) if 'Site Name(Office)' in df_ume.columns else ""
+    
+    s1_mask, cell_mask, vswr_mask, temp_mask = [pd.Series(False, index=df_ume.index)] * 4
+    
+    if 'Alarm Code Name' in df_ume.columns:
+        s1_mask = df_ume['Alarm Code Name'].astype(str).str.contains('s1 link|s1-gtpu', case=False, na=False)
+        cell_mask = df_ume['Alarm Code Name'].astype(str).str.contains('cell outage|cell shutdown|cell inter', case=False, na=False)
+        vswr_mask = df_ume['Alarm Code Name'].astype(str).str.contains('vswr|antenna standing', case=False, na=False)
+        temp_mask = df_ume['Alarm Code Name'].astype(str).str.contains('high temp', case=False, na=False)
+        
+    if 'Specific Problem' in df_ume.columns:
+        s1_mask = s1_mask | df_ume['Specific Problem'].astype(str).str.contains('s1 link|s1-gtpu', case=False, na=False)
+        cell_mask = cell_mask | df_ume['Specific Problem'].astype(str).str.contains('cell outage|cell shutdown|cell inter', case=False, na=False)
+        vswr_mask = vswr_mask | df_ume['Specific Problem'].astype(str).str.contains('vswr|antenna standing', case=False, na=False)
+        temp_mask = temp_mask | df_ume['Specific Problem'].astype(str).str.contains('high temp', case=False, na=False)
+
+    def get_ids_by_mask(mask):
+        res = set()
+        res.update(df_ume.loc[mask, 'V1'].dropna())
+        res.update(df_ume.loc[mask, 'V2'].dropna())
+        return {str(x).strip() for x in res if pd.notnull(x) and str(x).strip() != ''}
+        
+    ids_s1 = get_ids_by_mask(s1_mask)
+    ids_cell = get_ids_by_mask(cell_mask)
+    ids_vswr = get_ids_by_mask(vswr_mask)
+    ids_temp = get_ids_by_mask(temp_mask)
+
+    # Kalkulasi jumlah site yang terdampak secara global
+    if df_dapot is not None and not df_dapot.empty:
+        count_s1 = (df_dapot['C1'].isin(ids_s1) | df_dapot['C2'].isin(ids_s1) | df_dapot['C3'].isin(ids_s1)).sum()
+        count_cell = (df_dapot['C1'].isin(ids_cell) | df_dapot['C2'].isin(ids_cell) | df_dapot['C3'].isin(ids_cell)).sum()
+        count_vswr = (df_dapot['C1'].isin(ids_vswr) | df_dapot['C2'].isin(ids_vswr) | df_dapot['C3'].isin(ids_vswr)).sum()
+        count_temp = (df_dapot['C1'].isin(ids_temp) | df_dapot['C2'].isin(ids_temp) | df_dapot['C3'].isin(ids_temp)).sum()
+
+# --- 5. HEADER & TOOLBAR UPLOAD & FILTER ALARM ---
 col_title, col_header_right = st.columns([2.2, 1.8])
 with col_title: st.title("🗺️ Site Down Monitoring Kalimantan (ZTE Only)")
 with col_header_right:
@@ -91,12 +152,12 @@ with col_header_right:
     c_f, c_u = st.columns(2)
     
     with c_f:
-        with st.popover("🔍 Filter Spesifik", use_container_width=True):
-            st.markdown("**Site dengan Alarm:**")
-            f_s1 = st.checkbox("S1-GTPU / S1 Link Broken")
-            f_cell = st.checkbox("Cell Down (Outage/Shutdown/Interruption)")
-            f_vswr = st.checkbox("VSWR (Antenna Standing)")
-            f_temp = st.checkbox("High Temp")
+        with st.popover("🔍 Filter Alarm", use_container_width=True):
+            st.markdown("<div style='font-size:13px; font-weight:bold; margin-bottom:10px;'>Pilih Kategori Alarm:</div>", unsafe_allow_html=True)
+            f_s1 = st.checkbox(f"**S1-GTPU / S1 Link Broken** - {count_s1} sites")
+            f_cell = st.checkbox(f"**Cell Down (Outage/Shutdown/Interruption)** - {count_cell} sites")
+            f_vswr = st.checkbox(f"**VSWR** - {count_vswr} sites")
+            f_temp = st.checkbox(f"**High Temp** - {count_temp} sites")
             
     with c_u:
         with st.popover("⚙️ Update Data", use_container_width=True):
@@ -112,18 +173,17 @@ with col_header_right:
                 
             if ume_file_top:
                 if "last_uploaded" not in st.session_state or st.session_state["last_uploaded"] != ume_file_top.name:
-                    with st.spinner("Menyimpan..."):
-                        try:
-                            df_new = pd.read_csv(ume_file_top) if ume_file_top.name.endswith('.csv') else pd.read_excel(ume_file_top)
-                            valid_cols = [c for c in KOLOM_MASTER if c in df_new.columns]
-                            if valid_cols: df_new = df_new[valid_cols]
-                            df_new = df_new.dropna(how='all')
-                            if 'Occurrence Time' in df_new.columns: df_new['Occurrence Time'] = df_new['Occurrence Time'].astype(str)
-                            conn.update(spreadsheet=MASTER_SHEET_URL, worksheet=0, data=df_new)
-                            st.cache_data.clear(); conn.reset() 
-                            st.session_state["last_uploaded"] = ume_file_top.name
-                            st.success("✅ Berhasil. Klik Reload.")
-                        except Exception as e: st.error(f"Gagal: {e}")
+                    try:
+                        df_new = pd.read_csv(ume_file_top) if ume_file_top.name.endswith('.csv') else pd.read_excel(ume_file_top)
+                        valid_cols = [c for c in KOLOM_MASTER if c in df_new.columns]
+                        if valid_cols: df_new = df_new[valid_cols]
+                        df_new = df_new.dropna(how='all')
+                        if 'Occurrence Time' in df_new.columns: df_new['Occurrence Time'] = df_new['Occurrence Time'].astype(str)
+                        conn.update(spreadsheet=MASTER_SHEET_URL, worksheet=0, data=df_new)
+                        st.cache_data.clear(); conn.reset() 
+                        st.session_state["last_uploaded"] = ume_file_top.name
+                        st.success("✅ Berhasil. Klik Reload.")
+                    except Exception as e: st.error(f"Gagal: {e}")
 
 st.markdown("<hr style='margin: 0px 0px 15px 0px;'/>", unsafe_allow_html=True)
 
@@ -140,11 +200,9 @@ if df_dapot is not None:
             
             dict1, dict2 = {}, {}
             if 'ME ID' in df_ume.columns:
-                df_ume['V1'] = df_ume['ME ID'].apply(clean_id)
                 m1 = (df_ume['V1'] != '') & (df_ume['V1'].notna())
                 dict1 = df_ume[m1].groupby('V1')['Alarm_Detail'].apply(lambda x: "<br>".join(x.unique())).to_dict()
             if 'Site Name(Office)' in df_ume.columns:
-                df_ume['V2'] = df_ume['Site Name(Office)'].apply(get_6digit_id)
                 m2 = (df_ume['V2'] != '') & (df_ume['V2'].notna())
                 dict2 = df_ume[m2].groupby('V2')['Alarm_Detail'].apply(lambda x: "<br>".join(x.unique())).to_dict()
                 
@@ -159,12 +217,6 @@ if df_dapot is not None:
             cond_pow, cond_l1, cond_l2 = pd.Series(False, index=df_ume.index), pd.Series(False, index=df_ume.index), pd.Series(False, index=df_ume.index)
             cond_pot = pd.Series(False, index=df_ume.index)
             
-            # Mask untuk Filter Alarm Spesifik (Ditambahkan astype(str) agar tidak error float)
-            s1_mask = pd.Series(False, index=df_ume.index)
-            cell_mask = pd.Series(False, index=df_ume.index)
-            vswr_mask = pd.Series(False, index=df_ume.index)
-            temp_mask = pd.Series(False, index=df_ume.index)
-            
             if 'Alarm Code Name' in df_ume.columns:
                 cond_pow = df_ume['Alarm Code Name'].astype(str).str.contains('Input power-off', case=False, na=False)
                 if 'Position' in df_ume.columns: cond_pow = cond_pow & (df_ume['Position'].astype(str).str.strip() == 'Equipment=1')
@@ -172,32 +224,10 @@ if df_dapot is not None:
                 cond_l2 = df_ume['Alarm Code Name'].astype(str).str.contains('Site Abis control link broken', case=False, na=False)
                 cond_pot = df_ume['Alarm Code Name'].astype(str).str.contains('mains|ac fail|battery|low batt', case=False, na=False)
                 
-                s1_mask = df_ume['Alarm Code Name'].astype(str).str.contains('s1 link|s1-gtpu', case=False, na=False)
-                cell_mask = df_ume['Alarm Code Name'].astype(str).str.contains('cell outage|cell shutdown|cell inter', case=False, na=False)
-                vswr_mask = df_ume['Alarm Code Name'].astype(str).str.contains('vswr|antenna standing', case=False, na=False)
-                temp_mask = df_ume['Alarm Code Name'].astype(str).str.contains('high temp', case=False, na=False)
-
             if 'Specific Problem' in df_ume.columns:
                 cond_l1 = cond_l1 | df_ume['Specific Problem'].astype(str).str.contains('The link between the server and the ME is broken', case=False, na=False)
                 cond_l2 = cond_l2 | df_ume['Specific Problem'].astype(str).str.contains('Site Abis control link broken', case=False, na=False)
                 cond_pot = cond_pot | df_ume['Specific Problem'].astype(str).str.contains('mains|ac fail|battery|low batt', case=False, na=False)
-                
-                s1_mask = s1_mask | df_ume['Specific Problem'].astype(str).str.contains('s1 link|s1-gtpu', case=False, na=False)
-                cell_mask = cell_mask | df_ume['Specific Problem'].astype(str).str.contains('cell outage|cell shutdown|cell inter', case=False, na=False)
-                vswr_mask = vswr_mask | df_ume['Specific Problem'].astype(str).str.contains('vswr|antenna standing', case=False, na=False)
-                temp_mask = temp_mask | df_ume['Specific Problem'].astype(str).str.contains('high temp', case=False, na=False)
-
-            # Ekstrak ID untuk Filter Spesifik
-            def get_ids_by_mask(mask):
-                res = set()
-                if 'V1' in df_ume.columns: res.update(df_ume.loc[mask, 'V1'].dropna())
-                if 'V2' in df_ume.columns: res.update(df_ume.loc[mask, 'V2'].dropna())
-                return {str(x).strip() for x in res if pd.notnull(x) and str(x).strip() != ''}
-                
-            ids_s1 = get_ids_by_mask(s1_mask)
-            ids_cell = get_ids_by_mask(cell_mask)
-            ids_vswr = get_ids_by_mask(vswr_mask)
-            ids_temp = get_ids_by_mask(temp_mask)
 
             df_down = df_ume[cond_pow | cond_l1 | cond_l2].copy()
             df_pot_raw = df_ume[cond_pot & ~(cond_pow | cond_l1 | cond_l2)].copy()
@@ -234,25 +264,7 @@ if df_dapot is not None:
             pot_ids, min_occ_pot = extract_ids_and_time(df_pot)
             min_occurrence = {**min_occ_pot, **min_occ_down}
 
-            if 'LAT' in df_dapot.columns and 'LONG' in df_dapot.columns:
-                df_dapot['LAT'] = df_dapot['LAT'].astype(str).str.replace(',', '.').astype(float)
-                df_dapot['LONG'] = df_dapot['LONG'].astype(str).str.replace(',', '.').astype(float)
-
-            for col in ['Kota/Kab', 'Kecamatan']:
-                if col in df_dapot.columns: df_dapot[col] = df_dapot[col].apply(lambda x: str(x).title() if pd.notnull(x) else x)
-            if 'NOP' in df_dapot.columns:
-                df_dapot['NOP'] = df_dapot['NOP'].apply(lambda x: str(x).upper().replace('NOP', 'NOP') if pd.notnull(x) else x)
-
-            if 'Hub site' in df_dapot.columns: df_dapot['Hub site'] = df_dapot['Hub site'].fillna('Non Hub')
-            col_class = find_col(df_dapot, ['SITE CLASS', 'Site_Class', 'Site Class', 'Class'])
-            df_dapot['Site Class'] = df_dapot[col_class].fillna('-') if col_class else '-'
-
-            df_dapot['C1'] = df_dapot['NE ID'].apply(clean_id) if 'NE ID' in df_dapot.columns else pd.Series([""] * len(df_dapot))
-            df_dapot['C2'] = df_dapot['Site_ID'].astype(str).apply(get_6digit_id) if 'Site_ID' in df_dapot.columns else pd.Series([""] * len(df_dapot))
-            df_dapot['C3'] = df_dapot['Site_Name'].astype(str).apply(get_6digit_id) if 'Site_Name' in df_dapot.columns else pd.Series([""] * len(df_dapot))
-            
-            df_dapot['NE_CLEAN'] = df_dapot.apply(lambda row: row.get('C2') or row.get('C3') or row.get('C1') or "", axis=1)
-            
+            # Penetapan Status berdasarkan ekstraksi
             df_dapot['Status'] = 'Up'
             c_pot = df_dapot['C2'].isin(pot_ids) | df_dapot['C3'].isin(pot_ids) | df_dapot['C1'].isin(pot_ids)
             df_dapot.loc[c_pot, 'Status'] = 'Potential Down'
@@ -307,13 +319,11 @@ if df_dapot is not None:
                 pot_cnt = len(df_active_base[df_active_base['Status'] == 'Potential Down'])
                 down_cnt = len(df_active_base[df_active_base['Status'] == 'Down'])
                 
+                # Tombol Filter Zero Loading
                 c1, c2, c3 = st.columns(3)
-                with c1:
-                    btn_up = st.button(f"✅ Up: {up_cnt}", type="primary" if st.session_state.status_filter == 'Up' else "secondary", use_container_width=True, on_click=set_status, args=('Up',))
-                with c2:
-                    btn_pot = st.button(f"⚠️ Potential Down: {pot_cnt}", type="primary" if st.session_state.status_filter == 'Potential Down' else "secondary", use_container_width=True, on_click=set_status, args=('Potential Down',))
-                with c3:
-                    btn_dwn = st.button(f"🚨 Down: {down_cnt}", type="primary" if st.session_state.status_filter == 'Down' else "secondary", use_container_width=True, on_click=set_status, args=('Down',))
+                with c1: btn_up = st.button(f"✅ Up: {up_cnt}", type="primary" if st.session_state.status_filter == 'Up' else "secondary", use_container_width=True, on_click=set_status, args=('Up',))
+                with c2: btn_pot = st.button(f"⚠️ Potential Down: {pot_cnt}", type="primary" if st.session_state.status_filter == 'Potential Down' else "secondary", use_container_width=True, on_click=set_status, args=('Potential Down',))
+                with c3: btn_dwn = st.button(f"🚨 Down: {down_cnt}", type="primary" if st.session_state.status_filter == 'Down' else "secondary", use_container_width=True, on_click=set_status, args=('Down',))
                 
                 if st.session_state.status_filter != 'All':
                     df_active = df_active_base[df_active_base['Status'] == st.session_state.status_filter]
