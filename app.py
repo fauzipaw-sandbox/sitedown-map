@@ -141,7 +141,7 @@ if df_ume is not None and not df_ume.empty:
         df_dapot['All_Alarms'] = df_dapot['All_Alarms'].fillna(df_dapot['C1'].map(all_alarm_dict))
         df_dapot['All_Alarms'] = df_dapot['All_Alarms'].fillna("")
 
-    # Logika Down / Potential Down (Ditambah eNodeB is out of service)
+    # Logika Down / Potential Down (Termasuk eNodeB is out of service)
     cond_pow, cond_l1, cond_l2, cond_enodeb = [pd.Series(False, index=df_ume.index)] * 4
     cond_pot = pd.Series(False, index=df_ume.index)
     
@@ -166,7 +166,8 @@ if df_ume is not None and not df_ume.empty:
     if 'Occurrence Time' in df_pot_raw.columns:
         df_pot_raw['Occ_DT'] = pd.to_datetime(df_pot_raw['Occurrence Time'], errors='coerce')
         df_pot_raw['Hours_Diff'] = (now_wib - df_pot_raw['Occ_DT']).dt.total_seconds() / 3600
-        df_pot = df_pot_raw[df_pot_raw['Hours_Diff'] < 18].copy()
+        # 🔥 Diubah jadi < 12 jam sesuai permintaan
+        df_pot = df_pot_raw[df_pot_raw['Hours_Diff'] < 12].copy()
     else:
         df_pot = df_pot_raw.copy()
 
@@ -277,7 +278,7 @@ if df_dapot is not None:
                 dyn_vswr = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['vswr', 'antenna standing']) else 0).sum()
                 dyn_temp = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['high temp']) else 0).sum()
                 
-                # Alarm Tambahan Baru
+                # Alarm Tambahan Baru & Penyesuaian Nama
                 dyn_packet = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['packet loss', 'high packet loss']) else 0).sum()
                 dyn_sleeping = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['sleeping cell', 'sleeping']) else 0).sum()
                 dyn_rru_pwr = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['rru power abnormal', 'rru power']) else 0).sum()
@@ -287,7 +288,7 @@ if df_dapot is not None:
                 dyn_rssi = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['rssi', 'reverse link rssi']) else 0).sum()
                 dyn_ul_interf = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['high ul interference']) else 0).sum()
 
-                # Render ulang popover filter alarm dinamis
+                # Render ulang popover filter alarm dinamis (<12h title & new filters)
                 with popover_placeholder.popover("🔍 Filter Alarm", use_container_width=True):
                     st.markdown("<div style='font-size:13px; font-weight:bold; margin-bottom:10px;'>Pilih Kategori Alarm:</div>", unsafe_allow_html=True)
                     f_s1 = st.checkbox(f"**S1-GTPU / S1 Link Broken** - {dyn_s1} sites")
@@ -330,7 +331,7 @@ if df_dapot is not None:
                 
                 c1, c2, c3 = st.columns(3)
                 with c1: btn_up = st.button(f"✅ Up: {up_cnt}", type="primary" if st.session_state.status_filter == 'Up' else "secondary", use_container_width=True, on_click=set_status, args=('Up',))
-                with c2: btn_pot = st.button(f"⚠️ Potential Down: {pot_cnt}", type="primary" if st.session_state.status_filter == 'Potential Down' else "secondary", use_container_width=True, on_click=set_status, args=('Potential Down',))
+                with c2: btn_pot = st.button(f"⚠️ Potential Down (<12h): {pot_cnt}", type="primary" if st.session_state.status_filter == 'Potential Down' else "secondary", use_container_width=True, on_click=set_status, args=('Potential Down',))
                 with c3: btn_dwn = st.button(f"🚨 Down: {down_cnt}", type="primary" if st.session_state.status_filter == 'Down' else "secondary", use_container_width=True, on_click=set_status, args=('Down',))
                 
                 if st.session_state.status_filter != 'All':
@@ -385,7 +386,7 @@ if df_dapot is not None:
                         folium.TileLayer(tiles='https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', attr='Google', name='Google Satellite').add_to(m)
                         
                         fg_down = folium.FeatureGroup(name="<span style='color:#e60000; font-size:12px;'>🔴</span> <b>Down</b>", show=True)
-                        fg_pot = folium.FeatureGroup(name="<span style='color:#ff9900; font-size:12px;'>🟠</span> <b>Potential Down (<18h)</b>", show=True)
+                        fg_pot = folium.FeatureGroup(name="<span style='color:#ff9900; font-size:12px;'>🟠</span> <b>Potential Down (<12h)</b>", show=True)
                         fg_up = folium.FeatureGroup(name="<span style='color:#00802b; font-size:12px;'>🟢</span> <b>Up</b>", show=True)
                         fg_rec = folium.FeatureGroup(name="<span style='color:#0066ff; font-size:12px;'>🔵</span> <b>Recommend to Optim</b>", show=False)
                         fg_id = folium.FeatureGroup(name="<span style='color:black; font-size:12px;'>🏷️</span> <b>Tampilkan ID Map</b>", show=False)
@@ -401,7 +402,6 @@ if df_dapot is not None:
                             lat, lon = row['LAT'], row['LONG']
                             site_id = row.get('Site_ID', 'Unknown')
                             ne_id = str(row.get('NE_CLEAN', 'Unknown')).strip()
-                            # SITE NAME DI TOOLTIP AMBIL DARI KOLOM REAL_SITE_NAME
                             site_name = row.get('Real_Site_Name', 'Unknown')
                             site_class = row.get('Site Class', '-')
                             status = row['Status']
@@ -429,7 +429,7 @@ if df_dapot is not None:
                             if status == 'Down':
                                 color_hex, status_label, target_layer = '#e60000', '<b style="color:red;">Down</b>', fg_down
                             elif status == 'Potential Down':
-                                color_hex, status_label, target_layer = '#ff9900', '<b style="color:orange;">Potential Down (Mains/Batt <18h)</b>', fg_pot
+                                color_hex, status_label, target_layer = '#ff9900', '<b style="color:orange;">Potential Down (<12h)</b>', fg_pot
                             else:
                                 color_hex, status_label, target_layer = '#00802b', '<b style="color:green;">Up</b>', fg_up
 
