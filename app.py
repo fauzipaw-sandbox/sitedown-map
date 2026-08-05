@@ -101,7 +101,6 @@ if df_dapot is not None and not df_dapot.empty:
     col_class = find_col(df_dapot, ['SITE CLASS', 'Site_Class', 'Site Class', 'Class'])
     df_dapot['Site Class'] = df_dapot[col_class].fillna('-') if col_class else '-'
 
-    # Ambil Kolom Site Name Asli dari Data Site
     col_site_name_real = find_col(df_dapot, ['Site_Name', 'Site Name', 'site_name', 'Site Name(Office)'])
     df_dapot['Real_Site_Name'] = df_dapot[col_site_name_real].fillna('Unknown') if col_site_name_real else 'Unknown'
 
@@ -110,7 +109,6 @@ if df_dapot is not None and not df_dapot.empty:
     df_dapot['C3'] = df_dapot['Site_Name'].astype(str).apply(get_6digit_id) if 'Site_Name' in df_dapot.columns else pd.Series([""] * len(df_dapot))
     df_dapot['NE_CLEAN'] = df_dapot.apply(lambda row: str(row.get('C2') or row.get('C3') or row.get('C1') or "").strip(), axis=1)
 
-    # Bersihkan duplikat di Master (1 Site ID murni = 1 Baris)
     df_dapot = df_dapot[df_dapot['NE_CLEAN'] != ''].copy()
     df_dapot.drop_duplicates(subset=['NE_CLEAN'], keep='first', inplace=True)
 
@@ -166,7 +164,6 @@ if df_ume is not None and not df_ume.empty:
     if 'Occurrence Time' in df_pot_raw.columns:
         df_pot_raw['Occ_DT'] = pd.to_datetime(df_pot_raw['Occurrence Time'], errors='coerce')
         df_pot_raw['Hours_Diff'] = (now_wib - df_pot_raw['Occ_DT']).dt.total_seconds() / 3600
-        # 🔥 Diubah jadi < 12 jam sesuai permintaan
         df_pot = df_pot_raw[df_pot_raw['Hours_Diff'] < 12].copy()
     else:
         df_pot = df_pot_raw.copy()
@@ -277,8 +274,6 @@ if df_dapot is not None:
                 dyn_cell = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['cell outage', 'cell shutdown', 'cell inter']) else 0).sum()
                 dyn_vswr = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['vswr', 'antenna standing']) else 0).sum()
                 dyn_temp = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['high temp']) else 0).sum()
-                
-                # Alarm Tambahan Baru & Penyesuaian Nama
                 dyn_packet = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['packet loss', 'high packet loss']) else 0).sum()
                 dyn_sleeping = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['sleeping cell', 'sleeping']) else 0).sum()
                 dyn_rru_pwr = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['rru power abnormal', 'rru power']) else 0).sum()
@@ -288,7 +283,7 @@ if df_dapot is not None:
                 dyn_rssi = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['rssi', 'reverse link rssi']) else 0).sum()
                 dyn_ul_interf = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['high ul interference']) else 0).sum()
 
-                # Render ulang popover filter alarm dinamis (<12h title & new filters)
+                # Render ulang popover filter alarm dinamis
                 with popover_placeholder.popover("🔍 Filter Alarm", use_container_width=True):
                     st.markdown("<div style='font-size:13px; font-weight:bold; margin-bottom:10px;'>Pilih Kategori Alarm:</div>", unsafe_allow_html=True)
                     f_s1 = st.checkbox(f"**S1-GTPU / S1 Link Broken** - {dyn_s1} sites")
@@ -341,6 +336,7 @@ if df_dapot is not None:
 
                 st.write("") 
                 
+                # --- TABEL SUMMARY INTERAKTIF & SYNC ANTARTABEL ---
                 tab1, tab2, tab3, tab4 = st.tabs(["Kabupaten", "Kecamatan", "Site Class", "Hub/Non Hub"])
                 kab_df = get_summary_table(df_active, 'Kota/Kab')
                 kec_df = get_summary_table(df_active, 'Kecamatan')
@@ -352,6 +348,7 @@ if df_dapot is not None:
                 with tab3: event_cls = st.dataframe(cls_df, height=250, use_container_width=True, on_select="rerun", selection_mode="single-row")
                 with tab4: event_hub = st.dataframe(hub_df, height=250, use_container_width=True, on_select="rerun", selection_mode="single-row")
                     
+            # --- PENGECEKAN INTERAKTIF SYNC ANTARTABEL ---
             filter_col, filter_val = None, None
             if len(event_kab.selection.rows) > 0: filter_col, filter_val = 'Kota/Kab', kab_df.index[event_kab.selection.rows[0]]
             elif len(event_kec.selection.rows) > 0: filter_col, filter_val = 'Kecamatan', kec_df.index[event_kec.selection.rows[0]]
