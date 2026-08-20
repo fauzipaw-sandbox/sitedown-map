@@ -21,7 +21,7 @@ def set_status(status):
     else:
         st.session_state.status_filter = status
 
-# CSS Anti-Loading & Clean UI (Tanpa merusak iframe maps)
+# CSS Anti-Loading & Clean UI
 st.markdown("""
     <style>
         .block-container { padding-top: 1.5rem; padding-bottom: 2rem; padding-left: 2rem; padding-right: 2rem; max-width: 100%; }
@@ -93,15 +93,25 @@ except Exception:
 if (df_hotspot is None or df_hotspot.empty) and not st.session_state.df_hotspot_memory.empty:
     df_hotspot = st.session_state.df_hotspot_memory.copy()
 
-# Ekstraksi Tanggal & Jam Terakhir Hotspot Karhutla
+# 🔥 PARSING WAKTU PALING TERAKHIR DARI DATA HOTSPOT (CHRONOLOGICAL MAX)
 last_hotspot_str = "Tidak ada data"
 if df_hotspot is not None and not df_hotspot.empty:
     col_tgl = find_col(df_hotspot, ['tanggal', 'date', 'tgl'])
     col_wkt = find_col(df_hotspot, ['waktu', 'time', 'jam'])
     if col_tgl and col_wkt:
-        last_tgl = str(df_hotspot[col_tgl].dropna().iloc[-1]).strip()
-        last_wkt = str(df_hotspot[col_wkt].dropna().iloc[-1]).strip()
-        last_hotspot_str = f"{last_tgl} {last_wkt}"
+        try:
+            clean_tgl = df_hotspot[col_tgl].astype(str).str.strip()
+            clean_wkt = df_hotspot[col_wkt].astype(str).str.replace(' WIB', '', regex=False).str.strip()
+            df_temp_dt = pd.to_datetime(clean_tgl + ' ' + clean_wkt, format='%d-%m-%Y %H:%M', errors='coerce')
+            if df_temp_dt.notna().any():
+                max_idx = df_temp_dt.idxmax()
+                last_tgl = str(df_hotspot.loc[max_idx, col_tgl]).strip()
+                last_wkt = str(df_hotspot.loc[max_idx, col_wkt]).strip()
+                last_hotspot_str = f"{last_tgl} {last_wkt}"
+            else:
+                last_hotspot_str = str(df_hotspot[col_tgl].dropna().iloc[-1]).strip()
+        except Exception:
+            last_hotspot_str = str(df_hotspot[col_tgl].dropna().iloc[-1]).strip()
     elif col_tgl:
         last_hotspot_str = str(df_hotspot[col_tgl].dropna().iloc[-1]).strip()
 
@@ -157,12 +167,6 @@ if df_ume is not None and not df_ume.empty:
             if k in dict1: items.extend(dict1[k].split('<br>'))
             if k in dict2: items.extend(dict2[k].split('<br>'))
             all_alarm_dict[k] = "<br>".join(list(dict.fromkeys(items)))
-
-    if df_dapot is not None and not df_dapot.empty:
-        df_dapot['All_Alarms'] = df_dapot['C2'].map(all_alarm_dict)
-        df_dapot['All_Alarms'] = df_dapot['All_Alarms'].fillna(df_dapot['C3'].map(all_alarm_dict))
-        df_dapot['All_Alarms'] = df_dapot['All_Alarms'].fillna(df_dapot['C1'].map(all_alarm_dict))
-        df_dapot['All_Alarms'] = df_dapot['All_Alarms'].fillna("")
 
     cond_pow, cond_l1, cond_l2, cond_enodeb = [pd.Series(False, index=df_ume.index)] * 4
     cond_pot = pd.Series(False, index=df_ume.index)
@@ -431,8 +435,8 @@ if df_dapot is not None:
                         fg_id = folium.FeatureGroup(name="<span style='color:black; font-size:12px;'>🏷️</span> <b>Tampilkan ID Map</b>", show=False)
                         fg_hub = folium.FeatureGroup(name="<span style='color:#444; font-size:16px;'>★</span> <b>Penanda Hub Site</b>", show=True)
                         
-                        # Layer Hotspot Karhutla dengan Keterangan Tanggal & Jam Terakhir
-                        fg_hotspot = folium.FeatureGroup(name=f"<span style='font-size:13px;'>🔥</span> <b>Hotspot Karhutla (Last: {last_hotspot_str})</b>", show=False)
+                        # Label Hotspot Karhutla dengan font kecil dan tanpa bold pada keterangan waktu
+                        fg_hotspot = folium.FeatureGroup(name=f"<span style='font-size:13px;'>🔥</span> <b>Hotspot Karhutla</b> <span style='font-size:10.5px; color:#555; font-weight:normal;'>(Last: {last_hotspot_str})</span>", show=False)
                         
                         if (filter_col and filter_val) or st.session_state.status_filter != 'All' or is_spesifik_filtered:
                             min_lat, max_lat, min_lon, max_lon = df_map['LAT'].min(), df_map['LAT'].max(), df_map['LONG'].min(), df_map['LONG'].max()
@@ -485,7 +489,6 @@ if df_dapot is not None:
                             durasi_str = f" (Durasi: {format_durasi(start_dt)})" if (status in ['Down', 'Potential Down'] and start_dt) else ""
                             route_html_button = f'<hr style="margin: 4px 0;"><a href="{route_link}" target="_blank" style="display:block; text-align:center; background:#1a73e8; color:white; padding:4px; text-decoration:none; border-radius:4px; font-weight:bold; font-size:10px;">🔗 Buka Link Route</a>' if (pd.notnull(route_link) and str(route_link).strip() != "" and str(route_link).lower() != "nan") else ""
 
-                            # Tooltip HTML Rapih & Presisi
                             html_detail = f"""
                             <div style="width: 240px; font-size:11px; color:black; line-height: 1.35; overflow: hidden; word-break: break-word;">
                                 <b style="font-size:12px;">{site_name}</b> <br>
@@ -527,7 +530,7 @@ if df_dapot is not None:
                             label_html = f'<div style="position:absolute; left:14px; top:-2px; font-size:10px; font-weight:bold; color:{color_hex}; text-shadow:-1px -1px 0 #FFF,1px -1px 0 #FFF,-1px 1px 0 #FFF,1px 1px 0 #FFF,0px 0px 3px #FFF; white-space:nowrap;">{site_id}</div>'
                             folium.Marker(location=[lat, lon], icon=folium.DivIcon(html=f'<div style="position:relative; width:12px; height:12px;">{label_html}</div>', icon_size=(12, 12), icon_anchor=(6, 6))).add_to(fg_id)
 
-                        # --- RENDER TITIK HOTSPOT KARHUTLA ---
+                        # --- RENDER TITIK HOTSPOT KARHUTLA DENGAN WRAP TEXT KHUSUS LOKASI ---
                         if df_hotspot is not None and not df_hotspot.empty:
                             col_h_lat = find_col(df_hotspot, ['latitude', 'lat'])
                             col_h_lon = find_col(df_hotspot, ['longitude', 'long', 'lon'])
@@ -564,9 +567,14 @@ if df_dapot is not None:
                                         h_sat = str(h_row[col_h_sat]) if col_h_sat and pd.notnull(h_row[col_h_sat]) else '-'
 
                                         h_tooltip = f"""
-                                        <div style="width: 200px; font-size:11px; color:black; line-height: 1.35; overflow: hidden; word-break: break-word;">
+                                        <div style="width: 220px; font-size:11px; color:black; line-height: 1.35; overflow: hidden;">
                                             <b style="font-size:12px; color:{fire_border_color};">🔥 Hotspot Karhutla ({h_conf})</b><br>
-                                            <b>Lokasi:</b> {h_desa}, {h_kec}, {h_kab}<br>
+                                            <div style="margin-top: 3px;">
+                                                <b>Lokasi:</b> 
+                                                <span style="display: inline-block; max-width: 150px; vertical-align: top; word-break: break-word; white-space: normal;">
+                                                    {h_desa}, {h_kec}, {h_kab}
+                                                </span>
+                                            </div>
                                             <b>Provinsi:</b> {h_prov}<br>
                                             <b>Waktu:</b> {h_tgl} {h_wkt}<br>
                                             <b>Satelit:</b> {h_sat}<br>
