@@ -12,6 +12,9 @@ st.set_page_config(page_title="Site Down Monitoring Kalimantan (ZTE Only)", layo
 if 'status_filter' not in st.session_state:
     st.session_state.status_filter = 'All'
 
+if 'df_hotspot_memory' not in st.session_state:
+    st.session_state.df_hotspot_memory = pd.DataFrame()
+
 def set_status(status):
     if st.session_state.status_filter == status:
         st.session_state.status_filter = 'All'
@@ -50,6 +53,7 @@ def get_nearest_up_sites(lat, lon, df_up, k=2):
     return closest['Site_ID'].tolist(), closest['NE_CLEAN'].tolist()
 
 def find_col(df, possible_names):
+    if df is None or df.empty: return None
     df_cols_clean = {c.strip().lower(): c for c in df.columns}
     for name in possible_names:
         if name.strip().lower() in df_cols_clean: return df_cols_clean[name.strip().lower()]
@@ -71,7 +75,7 @@ def get_6digit_id(text):
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- 4. TARIK DATA DARI DATABASE (Force Reset Cache) ---
+# --- 4. TARIK DATA DARI DATABASE ---
 st.cache_data.clear()
 
 try: df_dapot = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet=1, sql="SELECT *", ttl=0)
@@ -80,9 +84,15 @@ except Exception as e: st.error(f"Gagal menarik data site: {e}"); df_dapot = Non
 try: df_ume = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet=0, sql="SELECT *", ttl=0)
 except Exception as e: st.error(f"Gagal menarik data alarm: {e}"); df_ume = pd.DataFrame()
 
-# Tarik Data Hotspot Karhutla
-try: df_hotspot = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet="Hotspot Karhutla", ttl=0)
-except Exception: df_hotspot = pd.DataFrame()
+# Tarik Data Hotspot dari GSheets (Fallback ke Session State Memory)
+df_hotspot = pd.DataFrame()
+try:
+    df_hotspot = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet="Hotspot Karhutla", ttl=0)
+except Exception:
+    pass
+
+if (df_hotspot is None or df_hotspot.empty) and not st.session_state.df_hotspot_memory.empty:
+    df_hotspot = st.session_state.df_hotspot_memory.copy()
 
 if df_ume is not None and not df_ume.empty and 'Occurrence Time' in df_ume.columns:
     latest_time = pd.to_datetime(df_ume['Occurrence Time'], errors='coerce').max()
@@ -113,7 +123,6 @@ if df_dapot is not None and not df_dapot.empty:
     df_dapot['C3'] = df_dapot['Site_Name'].astype(str).apply(get_6digit_id) if 'Site_Name' in df_dapot.columns else pd.Series([""] * len(df_dapot))
     df_dapot['NE_CLEAN'] = df_dapot.apply(lambda row: str(row.get('C2') or row.get('C3') or row.get('C1') or "").strip(), axis=1)
 
-    # Bersihkan duplikat di Master (1 Site ID murni = 1 Baris)
     df_dapot = df_dapot[df_dapot['NE_CLEAN'] != ''].copy()
     df_dapot.drop_duplicates(subset=['NE_CLEAN'], keep='first', inplace=True)
 
@@ -144,7 +153,6 @@ if df_ume is not None and not df_ume.empty:
         df_dapot['All_Alarms'] = df_dapot['All_Alarms'].fillna(df_dapot['C1'].map(all_alarm_dict))
         df_dapot['All_Alarms'] = df_dapot['All_Alarms'].fillna("")
 
-    # Logika Down / Potential Down (Termasuk eNodeB is out of service)
     cond_pow, cond_l1, cond_l2, cond_enodeb = [pd.Series(False, index=df_ume.index)] * 4
     cond_pot = pd.Series(False, index=df_ume.index)
     
@@ -268,10 +276,16 @@ with col_header_right:
                 if "last_uploaded_hotspot" not in st.session_state or st.session_state["last_uploaded_hotspot"] != hotspot_file_top.name:
                     try:
                         df_hotspot_new = pd.read_excel(hotspot_file_top, sheet_name="Detail")
-                        conn.update(spreadsheet=MASTER_SHEET_URL, worksheet="Hotspot Karhutla", data=df_hotspot_new)
-                        st.cache_data.clear(); conn.reset()
+                        st.session_state.df_hotspot_memory = df_hotspot_new.copy()
+                        df_hotspot = df_hotspot_new.copy()
+                        
+                        try:
+                            conn.update(spreadsheet=MASTER_SHEET_URL, worksheet="Hotspot Karhutla", data=df_hotspot_new)
+                        except Exception:
+                            pass # Tetap jalan via session memory
+                            
                         st.session_state["last_uploaded_hotspot"] = hotspot_file_top.name
-                        st.success("✅ Data Hotspot Karhutla berhasil disimpan di sheet 'Hotspot Karhutla'!")
+                        st.success(f"✅ Berhasil memuat {len(df_hotspot_new):,} titik Hotspot Karhutla!")
                     except Exception as e: st.error(f"Gagal upload Hotspot: {e}")
 
 st.markdown("<hr style='margin: 0px 0px 15px 0px;'/>", unsafe_allow_html=True)
@@ -411,8 +425,9 @@ if df_dapot is not None:
                         fg_id = folium.FeatureGroup(name="<span style='color:black; font-size:12px;'>🏷️</span> <b>Tampilkan ID Map</b>", show=False)
                         fg_hub = folium.FeatureGroup(name="<span style='color:#444; font-size:16px;'>★</span> <b>Penanda Hub Site</b>", show=True)
                         
-                        # 🔥 LAYER HOTSPOT KARHUTLA (BY DEFAULT DIMATIKAN / show=False)
-                        fg_hotspot = folium.FeatureGroup(name="<span style='font-size:13px;'>🔥</span> <b>Hotspot Karhutla</b>", show=False)
+                        # Hitung Total Titik Hotspot yang Siap Ditampilkan
+                        total_hotspot_count = len(df_hotspot) if (df_hotspot is not None and not df_hotspot.empty) else 0
+                        fg_hotspot = folium.FeatureGroup(name=f"<span style='font-size:13px;'>🔥</span> <b>Hotspot Karhutla ({total_hotspot_count:,} titik)</b>", show=False)
                         
                         if (filter_col and filter_val) or st.session_state.status_filter != 'All' or is_spesifik_filtered:
                             min_lat, max_lat, min_lon, max_lon = df_map['LAT'].min(), df_map['LAT'].max(), df_map['LONG'].min(), df_map['LONG'].max()
@@ -498,43 +513,63 @@ if df_dapot is not None:
                             label_html = f'<div style="position:absolute; left:14px; top:-2px; font-size:10px; font-weight:bold; color:{color_hex}; text-shadow:-1px -1px 0 #FFF,1px -1px 0 #FFF,-1px 1px 0 #FFF,1px 1px 0 #FFF,0px 0px 3px #FFF; white-space:nowrap;">{site_id}</div>'
                             folium.Marker(location=[lat, lon], icon=folium.DivIcon(html=f'<div style="position:relative; width:12px; height:12px;">{label_html}</div>', icon_size=(12, 12), icon_anchor=(6, 6))).add_to(fg_id)
 
-                        # --- RENDER TITIK HOTSPOT KARHUTLA ---
-                        if df_hotspot is not None and not df_hotspot.empty and 'Latitude' in df_hotspot.columns and 'Longitude' in df_hotspot.columns:
-                            df_hotspot_clean = df_hotspot.dropna(subset=['Latitude', 'Longitude']).copy()
-                            for _, h_row in df_hotspot_clean.iterrows():
-                                try:
-                                    h_lat = float(str(h_row['Latitude']).replace(',', '.'))
-                                    h_lon = float(str(h_row['Longitude']).replace(',', '.'))
-                                    h_conf = str(h_row.get('Confidence', 'Medium')).strip().title()
-                                    
-                                    # Warna badge api berdasarkan confidence
-                                    if 'High' in h_conf:
-                                        fire_border_color = "#e60000" # Merah
-                                    elif 'Medium' in h_conf:
-                                        fire_border_color = "#ffaa00" # Kuning/Oranye
-                                    else:
-                                        fire_border_color = "#a8d800" # Kuning Kehijauan
+                        # --- RENDER TITIK HOTSPOT KARHUTLA DENGAN AUTO-FIND COLUMN ---
+                        if df_hotspot is not None and not df_hotspot.empty:
+                            col_h_lat = find_col(df_hotspot, ['latitude', 'lat'])
+                            col_h_lon = find_col(df_hotspot, ['longitude', 'long', 'lon'])
+                            col_h_conf = find_col(df_hotspot, ['confidence', 'tingkat'])
+                            col_h_desa = find_col(df_hotspot, ['desa', 'kelurahan'])
+                            col_h_kec = find_col(df_hotspot, ['kecamatan', 'kec'])
+                            col_h_kab = find_col(df_hotspot, ['kab kota', 'kabupaten', 'kota'])
+                            col_h_prov = find_col(df_hotspot, ['provinsi', 'prov'])
+                            col_h_tgl = find_col(df_hotspot, ['tanggal', 'date', 'tgl'])
+                            col_h_wkt = find_col(df_hotspot, ['waktu', 'time', 'jam'])
+                            col_h_sat = find_col(df_hotspot, ['satelit', 'satellite'])
 
-                                    h_tooltip = f"""
-                                    <div style="width: 210px; font-size:11px; color:black; line-height: 1.3;">
-                                        <b style="font-size:12px; color:{fire_border_color};">🔥 Hotspot Karhutla ({h_conf})</b><br>
-                                        <b>Lokasi:</b> {h_row.get('Desa', '-')}, {h_row.get('Kecamatan', '-')}, {h_row.get('Kab Kota', '-')}<br>
-                                        <b>Provinsi:</b> {h_row.get('Provinsi', '-')}<br>
-                                        <b>Waktu:</b> {h_row.get('Tanggal', '-')} {h_row.get('Waktu', '')}<br>
-                                        <b>Satelit:</b> {h_row.get('Satelit', '-')}<br>
-                                        <b>Koordinat:</b> {h_lat:.5f}, {h_lon:.5f}
-                                    </div>
-                                    """
+                            if col_h_lat and col_h_lon:
+                                df_hotspot_valid = df_hotspot.dropna(subset=[col_h_lat, col_h_lon]).copy()
+                                for _, h_row in df_hotspot_valid.iterrows():
+                                    try:
+                                        h_lat = float(str(h_row[col_h_lat]).replace(',', '.'))
+                                        h_lon = float(str(h_row[col_h_lon]).replace(',', '.'))
+                                        h_conf = str(h_row[col_h_conf]).strip().title() if col_h_conf and pd.notnull(h_row[col_h_conf]) else 'Medium'
+                                        
+                                        # Warna badge api berdasarkan confidence
+                                        if 'High' in h_conf:
+                                            fire_border_color = "#e60000" # Merah
+                                        elif 'Medium' in h_conf:
+                                            fire_border_color = "#ffaa00" # Kuning/Oranye
+                                        else:
+                                            fire_border_color = "#a8d800" # Kuning Kehijauan
 
-                                    badge_html = f'''<div style="background-color:{fire_border_color}; width:20px; height:20px; border-radius:50%; display:flex; align-items:center; justify-content:center; border:2px solid white; box-shadow:0 0 5px rgba(0,0,0,0.7); font-size:11px;">🔥</div>'''
-                                    
-                                    folium.Marker(
-                                        location=[h_lat, h_lon],
-                                        icon=folium.DivIcon(html=badge_html, icon_size=(20, 20), icon_anchor=(10, 10)),
-                                        tooltip=folium.Tooltip(h_tooltip)
-                                    ).add_to(fg_hotspot)
-                                except Exception:
-                                    continue
+                                        h_desa = h_row[col_h_desa] if col_h_desa and pd.notnull(h_row[col_h_desa]) else '-'
+                                        h_kec = h_row[col_h_kec] if col_h_kec and pd.notnull(h_row[col_h_kec]) else '-'
+                                        h_kab = h_row[col_h_kab] if col_h_kab and pd.notnull(h_row[col_h_kab]) else '-'
+                                        h_prov = h_row[col_h_prov] if col_h_prov and pd.notnull(h_row[col_h_prov]) else '-'
+                                        h_tgl = str(h_row[col_h_tgl]) if col_h_tgl and pd.notnull(h_row[col_h_tgl]) else '-'
+                                        h_wkt = str(h_row[col_h_wkt]) if col_h_wkt and pd.notnull(h_row[col_h_wkt]) else ''
+                                        h_sat = str(h_row[col_h_sat]) if col_h_sat and pd.notnull(h_row[col_h_sat]) else '-'
+
+                                        h_tooltip = f"""
+                                        <div style="width: 210px; font-size:11px; color:black; line-height: 1.3;">
+                                            <b style="font-size:12px; color:{fire_border_color};">🔥 Hotspot Karhutla ({h_conf})</b><br>
+                                            <b>Lokasi:</b> {h_desa}, {h_kec}, {h_kab}<br>
+                                            <b>Provinsi:</b> {h_prov}<br>
+                                            <b>Waktu:</b> {h_tgl} {h_wkt}<br>
+                                            <b>Satelit:</b> {h_sat}<br>
+                                            <b>Koordinat:</b> {h_lat:.5f}, {h_lon:.5f}
+                                        </div>
+                                        """
+
+                                        badge_html = f'''<div style="background-color:{fire_border_color}; width:20px; height:20px; border-radius:50%; display:flex; align-items:center; justify-content:center; border:2px solid white; box-shadow:0 0 5px rgba(0,0,0,0.7); font-size:11px; cursor:pointer;">🔥</div>'''
+                                        
+                                        folium.Marker(
+                                            location=[h_lat, h_lon],
+                                            icon=folium.DivIcon(html=badge_html, icon_size=(20, 20), icon_anchor=(10, 10)),
+                                            tooltip=folium.Tooltip(h_tooltip)
+                                        ).add_to(fg_hotspot)
+                                    except Exception:
+                                        continue
 
                         m.add_child(fg_down)
                         m.add_child(fg_pot)
@@ -542,7 +577,7 @@ if df_dapot is not None:
                         m.add_child(fg_rec)
                         m.add_child(fg_id)
                         m.add_child(fg_hub)
-                        m.add_child(fg_hotspot) # Hotspot Layer ditambahkan
+                        m.add_child(fg_hotspot)
                         
                         folium.LayerControl(position='topright', collapsed=True).add_to(m)
                         
