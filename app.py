@@ -21,7 +21,7 @@ def set_status(status):
     else:
         st.session_state.status_filter = status
 
-# CSS Anti-Loading & Responsif Text Wrapping
+# CSS Anti-Loading & Clean UI (Tanpa merusak iframe maps)
 st.markdown("""
     <style>
         .block-container { padding-top: 1.5rem; padding-bottom: 2rem; padding-left: 2rem; padding-right: 2rem; max-width: 100%; }
@@ -33,15 +33,6 @@ st.markdown("""
         .update-info { text-align: right; font-size: 13px; color: #555; margin-bottom: 8px; margin-top: -5px;}
         [data-testid="stStatusWidget"] {visibility: hidden; display: none !important;} 
         .stProgress {display: none !important;}
-        
-        /* Auto-wrap & responsive cell styling untuk tabel data */
-        [data-testid="stDataFrame"] div[data-testid="stTable"] {
-            word-break: break-word !important;
-            white-space: normal !important;
-        }
-        div[data-testid="stDataFrame"] div {
-            word-wrap: break-word !important;
-        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -93,7 +84,6 @@ except Exception as e: st.error(f"Gagal menarik data site: {e}"); df_dapot = Non
 try: df_ume = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet=0, sql="SELECT *", ttl=0)
 except Exception as e: st.error(f"Gagal menarik data alarm: {e}"); df_ume = pd.DataFrame()
 
-# Tarik Data Hotspot dari GSheets (Fallback ke Session State Memory)
 df_hotspot = pd.DataFrame()
 try:
     df_hotspot = conn.read(spreadsheet=MASTER_SHEET_URL, worksheet="Hotspot Karhutla", ttl=0)
@@ -102,6 +92,18 @@ except Exception:
 
 if (df_hotspot is None or df_hotspot.empty) and not st.session_state.df_hotspot_memory.empty:
     df_hotspot = st.session_state.df_hotspot_memory.copy()
+
+# Ekstraksi Tanggal & Jam Terakhir Hotspot Karhutla
+last_hotspot_str = "Tidak ada data"
+if df_hotspot is not None and not df_hotspot.empty:
+    col_tgl = find_col(df_hotspot, ['tanggal', 'date', 'tgl'])
+    col_wkt = find_col(df_hotspot, ['waktu', 'time', 'jam'])
+    if col_tgl and col_wkt:
+        last_tgl = str(df_hotspot[col_tgl].dropna().iloc[-1]).strip()
+        last_wkt = str(df_hotspot[col_wkt].dropna().iloc[-1]).strip()
+        last_hotspot_str = f"{last_tgl} {last_wkt}"
+    elif col_tgl:
+        last_hotspot_str = str(df_hotspot[col_tgl].dropna().iloc[-1]).strip()
 
 if df_ume is not None and not df_ume.empty and 'Occurrence Time' in df_ume.columns:
     latest_time = pd.to_datetime(df_ume['Occurrence Time'], errors='coerce').max()
@@ -265,7 +267,6 @@ with col_header_right:
             if st.button("🔄 Reload / Clear Cache", use_container_width=True, type="primary"):
                 st.cache_data.clear(); conn.reset(); st.rerun()
                 
-            # Proses Simpan File UME
             if ume_file_top:
                 if "last_uploaded_ume" not in st.session_state or st.session_state["last_uploaded_ume"] != ume_file_top.name:
                     try:
@@ -280,7 +281,6 @@ with col_header_right:
                         st.success("✅ Data Alarm UME berhasil disimpan!")
                     except Exception as e: st.error(f"Gagal upload UME: {e}")
 
-            # Proses Simpan File Hotspot Karhutla
             if hotspot_file_top:
                 if "last_uploaded_hotspot" not in st.session_state or st.session_state["last_uploaded_hotspot"] != hotspot_file_top.name:
                     try:
@@ -294,7 +294,7 @@ with col_header_right:
                             pass
                             
                         st.session_state["last_uploaded_hotspot"] = hotspot_file_top.name
-                        st.success(f"✅ Berhasil memuat {len(df_hotspot_new):,} titik Hotspot Karhutla!")
+                        st.success("✅ Berhasil memuat data Hotspot Karhutla!")
                     except Exception as e: st.error(f"Gagal upload Hotspot: {e}")
 
 st.markdown("<hr style='margin: 0px 0px 15px 0px;'/>", unsafe_allow_html=True)
@@ -314,7 +314,6 @@ if df_dapot is not None:
                 
                 df_nop_filtered = df_dapot[df_dapot['NOP'] == selected_nop].copy()
 
-                # Hitung jumlah site unik khusus NOP yang aktif
                 dyn_s1 = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['s1 link', 's1-gtpu']) else 0).sum()
                 dyn_cell = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['cell outage', 'cell shutdown', 'cell inter']) else 0).sum()
                 dyn_vswr = df_nop_filtered['All_Alarms'].apply(lambda x: 1 if any(w in str(x).lower() for w in ['vswr', 'antenna standing']) else 0).sum()
@@ -346,7 +345,6 @@ if df_dapot is not None:
                 
                 df_active_base = df_nop_filtered
                 
-                # Filter Spesifik Alarm
                 is_spesifik_filtered = f_s1 or f_cell or f_vswr or f_temp or f_packet or f_sleeping or f_rru_pwr or f_rru_lnk or f_genset_fail or f_genset_run or f_rssi or f_ul_interf
                 if is_spesifik_filtered:
                     mask_sp = pd.Series(False, index=df_active_base.index)
@@ -381,7 +379,7 @@ if df_dapot is not None:
 
                 st.write("") 
                 
-                # --- TABEL SUMMARY INTERAKTIF & SYNC ANTARTABEL ---
+                # --- TABEL SUMMARY INTERAKTIF ---
                 tab1, tab2, tab3, tab4 = st.tabs(["Kabupaten", "Kecamatan", "Site Class", "Hub/Non Hub"])
                 kab_df = get_summary_table(df_active, 'Kota/Kab')
                 kec_df = get_summary_table(df_active, 'Kecamatan')
@@ -393,7 +391,6 @@ if df_dapot is not None:
                 with tab3: event_cls = st.dataframe(cls_df, height=250, use_container_width=True, on_select="rerun", selection_mode="single-row")
                 with tab4: event_hub = st.dataframe(hub_df, height=250, use_container_width=True, on_select="rerun", selection_mode="single-row")
                     
-            # --- PENGECEKAN INTERAKTIF SYNC ANTARTABEL ---
             filter_col, filter_val = None, None
             if len(event_kab.selection.rows) > 0: filter_col, filter_val = 'Kota/Kab', kab_df.index[event_kab.selection.rows[0]]
             elif len(event_kec.selection.rows) > 0: filter_col, filter_val = 'Kecamatan', kec_df.index[event_kec.selection.rows[0]]
@@ -434,8 +431,8 @@ if df_dapot is not None:
                         fg_id = folium.FeatureGroup(name="<span style='color:black; font-size:12px;'>🏷️</span> <b>Tampilkan ID Map</b>", show=False)
                         fg_hub = folium.FeatureGroup(name="<span style='color:#444; font-size:16px;'>★</span> <b>Penanda Hub Site</b>", show=True)
                         
-                        total_hotspot_count = len(df_hotspot) if (df_hotspot is not None and not df_hotspot.empty) else 0
-                        fg_hotspot = folium.FeatureGroup(name=f"<span style='font-size:13px;'>🔥</span> <b>Hotspot Karhutla ({total_hotspot_count:,} titik)</b>", show=False)
+                        # Layer Hotspot Karhutla dengan Keterangan Tanggal & Jam Terakhir
+                        fg_hotspot = folium.FeatureGroup(name=f"<span style='font-size:13px;'>🔥</span> <b>Hotspot Karhutla (Last: {last_hotspot_str})</b>", show=False)
                         
                         if (filter_col and filter_val) or st.session_state.status_filter != 'All' or is_spesifik_filtered:
                             min_lat, max_lat, min_lon, max_lon = df_map['LAT'].min(), df_map['LAT'].max(), df_map['LONG'].min(), df_map['LONG'].max()
@@ -488,10 +485,10 @@ if df_dapot is not None:
                             durasi_str = f" (Durasi: {format_durasi(start_dt)})" if (status in ['Down', 'Potential Down'] and start_dt) else ""
                             route_html_button = f'<hr style="margin: 4px 0;"><a href="{route_link}" target="_blank" style="display:block; text-align:center; background:#1a73e8; color:white; padding:4px; text-decoration:none; border-radius:4px; font-weight:bold; font-size:10px;">🔗 Buka Link Route</a>' if (pd.notnull(route_link) and str(route_link).strip() != "" and str(route_link).lower() != "nan") else ""
 
-                            # Tooltip HTML Responsif & Auto Wrap Text
+                            # Tooltip HTML Rapih & Presisi
                             html_detail = f"""
-                            <div style="max-width: 270px; width: 100%; font-size:11px; color:black; white-space: normal; word-wrap: break-word; word-break: break-word; line-height: 1.35;">
-                                <b style="font-size:13px; word-break: break-word;">{site_name}</b> <br>
+                            <div style="width: 240px; font-size:11px; color:black; line-height: 1.35; overflow: hidden; word-break: break-word;">
+                                <b style="font-size:12px;">{site_name}</b> <br>
                                 Site ID: <b>{site_id}</b><br>
                                 Status: {status_label}{durasi_str}<br>
                                 <b>Class:</b> {site_class} | <b>Tipe:</b> {hub_status}<br>
@@ -503,7 +500,7 @@ if df_dapot is not None:
                                 <b>Site ID Anakan:</b> <span style="word-break: break-all;">{site_id_anakan}</span>
                                 <hr style="margin: 4px 0;">
                                 <b style="font-size:10px;">Daftar Alarm:</b><br>
-                                <div style="font-size:9.5px; line-height:1.25; background:#f1f1f1; padding:5px; border-radius:4px; max-height:120px; overflow-y:auto; word-break: break-word; white-space: normal;">
+                                <div style="font-size:9.5px; line-height:1.25; background:#f1f1f1; padding:4px; border-radius:4px; max-height:100px; overflow-y:auto;">
                                     {alarms_terkait}
                                 </div>
                                 {route_html_button}
@@ -530,7 +527,7 @@ if df_dapot is not None:
                             label_html = f'<div style="position:absolute; left:14px; top:-2px; font-size:10px; font-weight:bold; color:{color_hex}; text-shadow:-1px -1px 0 #FFF,1px -1px 0 #FFF,-1px 1px 0 #FFF,1px 1px 0 #FFF,0px 0px 3px #FFF; white-space:nowrap;">{site_id}</div>'
                             folium.Marker(location=[lat, lon], icon=folium.DivIcon(html=f'<div style="position:relative; width:12px; height:12px;">{label_html}</div>', icon_size=(12, 12), icon_anchor=(6, 6))).add_to(fg_id)
 
-                        # --- RENDER TITIK HOTSPOT KARHUTLA DENGAN AUTO-FIND COLUMN & WRAP TEXT ---
+                        # --- RENDER TITIK HOTSPOT KARHUTLA ---
                         if df_hotspot is not None and not df_hotspot.empty:
                             col_h_lat = find_col(df_hotspot, ['latitude', 'lat'])
                             col_h_lon = find_col(df_hotspot, ['longitude', 'long', 'lon'])
@@ -567,7 +564,7 @@ if df_dapot is not None:
                                         h_sat = str(h_row[col_h_sat]) if col_h_sat and pd.notnull(h_row[col_h_sat]) else '-'
 
                                         h_tooltip = f"""
-                                        <div style="max-width: 220px; width:100%; font-size:11px; color:black; line-height: 1.35; white-space: normal; word-wrap: break-word; word-break: break-word;">
+                                        <div style="width: 200px; font-size:11px; color:black; line-height: 1.35; overflow: hidden; word-break: break-word;">
                                             <b style="font-size:12px; color:{fire_border_color};">🔥 Hotspot Karhutla ({h_conf})</b><br>
                                             <b>Lokasi:</b> {h_desa}, {h_kec}, {h_kab}<br>
                                             <b>Provinsi:</b> {h_prov}<br>
