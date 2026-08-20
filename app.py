@@ -21,7 +21,7 @@ def set_status(status):
     else:
         st.session_state.status_filter = status
 
-# CSS Anti-Loading (Biar UI Instan)
+# CSS Anti-Loading & Responsif Text Wrapping
 st.markdown("""
     <style>
         .block-container { padding-top: 1.5rem; padding-bottom: 2rem; padding-left: 2rem; padding-right: 2rem; max-width: 100%; }
@@ -33,6 +33,15 @@ st.markdown("""
         .update-info { text-align: right; font-size: 13px; color: #555; margin-bottom: 8px; margin-top: -5px;}
         [data-testid="stStatusWidget"] {visibility: hidden; display: none !important;} 
         .stProgress {display: none !important;}
+        
+        /* Auto-wrap & responsive cell styling untuk tabel data */
+        [data-testid="stDataFrame"] div[data-testid="stTable"] {
+            word-break: break-word !important;
+            white-space: normal !important;
+        }
+        div[data-testid="stDataFrame"] div {
+            word-wrap: break-word !important;
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -282,7 +291,7 @@ with col_header_right:
                         try:
                             conn.update(spreadsheet=MASTER_SHEET_URL, worksheet="Hotspot Karhutla", data=df_hotspot_new)
                         except Exception:
-                            pass # Tetap jalan via session memory
+                            pass
                             
                         st.session_state["last_uploaded_hotspot"] = hotspot_file_top.name
                         st.success(f"✅ Berhasil memuat {len(df_hotspot_new):,} titik Hotspot Karhutla!")
@@ -425,7 +434,6 @@ if df_dapot is not None:
                         fg_id = folium.FeatureGroup(name="<span style='color:black; font-size:12px;'>🏷️</span> <b>Tampilkan ID Map</b>", show=False)
                         fg_hub = folium.FeatureGroup(name="<span style='color:#444; font-size:16px;'>★</span> <b>Penanda Hub Site</b>", show=True)
                         
-                        # Hitung Total Titik Hotspot yang Siap Ditampilkan
                         total_hotspot_count = len(df_hotspot) if (df_hotspot is not None and not df_hotspot.empty) else 0
                         fg_hotspot = folium.FeatureGroup(name=f"<span style='font-size:13px;'>🔥</span> <b>Hotspot Karhutla ({total_hotspot_count:,} titik)</b>", show=False)
                         
@@ -480,16 +488,25 @@ if df_dapot is not None:
                             durasi_str = f" (Durasi: {format_durasi(start_dt)})" if (status in ['Down', 'Potential Down'] and start_dt) else ""
                             route_html_button = f'<hr style="margin: 4px 0;"><a href="{route_link}" target="_blank" style="display:block; text-align:center; background:#1a73e8; color:white; padding:4px; text-decoration:none; border-radius:4px; font-weight:bold; font-size:10px;">🔗 Buka Link Route</a>' if (pd.notnull(route_link) and str(route_link).strip() != "" and str(route_link).lower() != "nan") else ""
 
+                            # Tooltip HTML Responsif & Auto Wrap Text
                             html_detail = f"""
-                            <div style="width: 260px; font-size:11px; color:black; white-space: normal; line-height: 1.3;">
-                                <b style="font-size:13px;">{site_name}</b> <br>Site ID: <b>{site_id}</b><br>
-                                Status: {status_label}{durasi_str}<br><b>Class:</b> {site_class} | <b>Tipe:</b> {hub_status}<br>
-                                <b>Power:</b> {power_type} | <b>Grid:</b> {grid_type}<br><b>Transport:</b> {transport_type}<br>
-                                <b>Simpul 4G:</b> {simpul_4g}<br><b>Simpul Telkom:</b> {simpul_telkom}<br><b>Jumlah Anakan:</b> {jumlah_anakan} site<br>
+                            <div style="max-width: 270px; width: 100%; font-size:11px; color:black; white-space: normal; word-wrap: break-word; word-break: break-word; line-height: 1.35;">
+                                <b style="font-size:13px; word-break: break-word;">{site_name}</b> <br>
+                                Site ID: <b>{site_id}</b><br>
+                                Status: {status_label}{durasi_str}<br>
+                                <b>Class:</b> {site_class} | <b>Tipe:</b> {hub_status}<br>
+                                <b>Power:</b> {power_type} | <b>Grid:</b> {grid_type}<br>
+                                <b>Transport:</b> {transport_type}<br>
+                                <b>Simpul 4G:</b> {simpul_4g}<br>
+                                <b>Simpul Telkom:</b> {simpul_telkom}<br>
+                                <b>Jumlah Anakan:</b> {jumlah_anakan} site<br>
                                 <b>Site ID Anakan:</b> <span style="word-break: break-all;">{site_id_anakan}</span>
-                                <hr style="margin: 4px 0;"><b style="font-size:10px;">Daftar Alarm:</b><br>
-                                <div style="font-size:9.5px; line-height:1.2; background:#f1f1f1; padding:4px; border-radius:4px;">
-                                    {alarms_terkait}</div>{route_html_button}
+                                <hr style="margin: 4px 0;">
+                                <b style="font-size:10px;">Daftar Alarm:</b><br>
+                                <div style="font-size:9.5px; line-height:1.25; background:#f1f1f1; padding:5px; border-radius:4px; max-height:120px; overflow-y:auto; word-break: break-word; white-space: normal;">
+                                    {alarms_terkait}
+                                </div>
+                                {route_html_button}
                             </div>
                             """
                             
@@ -513,7 +530,7 @@ if df_dapot is not None:
                             label_html = f'<div style="position:absolute; left:14px; top:-2px; font-size:10px; font-weight:bold; color:{color_hex}; text-shadow:-1px -1px 0 #FFF,1px -1px 0 #FFF,-1px 1px 0 #FFF,1px 1px 0 #FFF,0px 0px 3px #FFF; white-space:nowrap;">{site_id}</div>'
                             folium.Marker(location=[lat, lon], icon=folium.DivIcon(html=f'<div style="position:relative; width:12px; height:12px;">{label_html}</div>', icon_size=(12, 12), icon_anchor=(6, 6))).add_to(fg_id)
 
-                        # --- RENDER TITIK HOTSPOT KARHUTLA DENGAN AUTO-FIND COLUMN ---
+                        # --- RENDER TITIK HOTSPOT KARHUTLA DENGAN AUTO-FIND COLUMN & WRAP TEXT ---
                         if df_hotspot is not None and not df_hotspot.empty:
                             col_h_lat = find_col(df_hotspot, ['latitude', 'lat'])
                             col_h_lon = find_col(df_hotspot, ['longitude', 'long', 'lon'])
@@ -534,13 +551,12 @@ if df_dapot is not None:
                                         h_lon = float(str(h_row[col_h_lon]).replace(',', '.'))
                                         h_conf = str(h_row[col_h_conf]).strip().title() if col_h_conf and pd.notnull(h_row[col_h_conf]) else 'Medium'
                                         
-                                        # Warna badge api berdasarkan confidence
                                         if 'High' in h_conf:
-                                            fire_border_color = "#e60000" # Merah
+                                            fire_border_color = "#e60000"
                                         elif 'Medium' in h_conf:
-                                            fire_border_color = "#ffaa00" # Kuning/Oranye
+                                            fire_border_color = "#ffaa00"
                                         else:
-                                            fire_border_color = "#a8d800" # Kuning Kehijauan
+                                            fire_border_color = "#a8d800"
 
                                         h_desa = h_row[col_h_desa] if col_h_desa and pd.notnull(h_row[col_h_desa]) else '-'
                                         h_kec = h_row[col_h_kec] if col_h_kec and pd.notnull(h_row[col_h_kec]) else '-'
@@ -551,7 +567,7 @@ if df_dapot is not None:
                                         h_sat = str(h_row[col_h_sat]) if col_h_sat and pd.notnull(h_row[col_h_sat]) else '-'
 
                                         h_tooltip = f"""
-                                        <div style="width: 210px; font-size:11px; color:black; line-height: 1.3;">
+                                        <div style="max-width: 220px; width:100%; font-size:11px; color:black; line-height: 1.35; white-space: normal; word-wrap: break-word; word-break: break-word;">
                                             <b style="font-size:12px; color:{fire_border_color};">🔥 Hotspot Karhutla ({h_conf})</b><br>
                                             <b>Lokasi:</b> {h_desa}, {h_kec}, {h_kab}<br>
                                             <b>Provinsi:</b> {h_prov}<br>
