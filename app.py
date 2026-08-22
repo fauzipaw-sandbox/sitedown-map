@@ -16,6 +16,9 @@ if 'status_filter' not in st.session_state:
 if 'df_hotspot_memory' not in st.session_state:
     st.session_state.df_hotspot_memory = pd.DataFrame()
 
+if 'map_target_location' not in st.session_state:
+    st.session_state.map_target_location = None
+
 def set_status(status):
     if st.session_state.status_filter == status:
         st.session_state.status_filter = 'All'
@@ -136,7 +139,8 @@ if df_dapot is not None and not df_dapot.empty:
     col_class = find_col(df_dapot, ['SITE CLASS', 'Site_Class', 'Site Class', 'Class'])
     df_dapot['Site Class'] = df_dapot[col_class].fillna('-') if col_class else '-'
 
-    col_tp = find_col(df_dapot, ['Tower Provider', 'TP', 'Tower_Provider', 'Provider', 'Tower Provider New'])
+    # Menggunakan Kolom TOWER OWNER untuk Tower Provider
+    col_tp = find_col(df_dapot, ['TOWER OWNER', 'Tower Owner', 'tower owner', 'Tower Provider', 'TP', 'Tower_Provider'])
     df_dapot['Tower Provider'] = df_dapot[col_tp].fillna('-') if col_tp else '-'
 
     col_site_name_real = find_col(df_dapot, ['Site_Name', 'Site Name', 'site_name', 'Site Name(Office)'])
@@ -414,7 +418,6 @@ if df_dapot is not None:
                     for _, s_row in df_active.dropna(subset=['LAT', 'LONG']).iterrows():
                         s_lat, s_lon = s_row['LAT'], s_row['LONG']
                         
-                        # Hitung jarak ke seluruh hotspot
                         lat1, lon1 = map(math.radians, [s_lat, s_lon])
                         lat2 = df_h_clean['h_lat'].apply(math.radians)
                         lon2 = df_h_clean['h_lon'].apply(math.radians)
@@ -425,7 +428,7 @@ if df_dapot is not None:
                         dists = 6371 * (2 * a.apply(math.sqrt).apply(lambda v: math.asin(min(1.0, max(0.0, v)))))
                         
                         min_dist = dists.min()
-                        if min_dist <= 10.0:  # Radius potensi bahaya 10 KM
+                        if min_dist <= 10.0:  # Radius bahaya 10 KM
                             closest_idx = dists.idxmin()
                             conf_val = df_h_clean.loc[closest_idx, col_h_conf] if col_h_conf else '-'
                             risk_rows.append({
@@ -436,11 +439,13 @@ if df_dapot is not None:
                                 'Confidence Api': str(conf_val).strip().title(),
                                 'Site Class': s_row.get('Site Class', '-'),
                                 'Hub site': s_row.get('Hub site', '-'),
-                                'Tower Provider': s_row.get('Tower Provider', '-')
+                                'Tower Provider': s_row.get('Tower Provider', '-'),
+                                'LAT': s_lat,
+                                'LONG': s_lon
                             })
                     
                     if risk_rows:
-                        df_karhutla_risk = pd.DataFrame(risk_rows).sort_values(by='Jarak Api (km)', ascending=True).set_index('Site ID')
+                        df_karhutla_risk = pd.DataFrame(risk_rows).sort_values(by='Jarak Api (km)', ascending=True)
 
             with tab1: event_kab = st.dataframe(kab_df, height=250, use_container_width=True, on_select="rerun", selection_mode="single-row")
             with tab2: event_kec = st.dataframe(kec_df, height=250, use_container_width=True, on_select="rerun", selection_mode="single-row")
@@ -448,7 +453,11 @@ if df_dapot is not None:
             with tab4: event_hub = st.dataframe(hub_df, height=250, use_container_width=True, on_select="rerun", selection_mode="single-row")
             with tab5:
                 if not df_karhutla_risk.empty:
-                    st.dataframe(df_karhutla_risk, height=250, use_container_width=True)
+                    df_karhutla_display = df_karhutla_risk.drop(columns=['LAT', 'LONG']).set_index('Site ID')
+                    event_karhutla = st.dataframe(df_karhutla_display, height=250, use_container_width=True, on_select="rerun", selection_mode="single-row")
+                    if len(event_karhutla.selection.rows) > 0:
+                        selected_row_k = df_karhutla_risk.iloc[event_karhutla.selection.rows[0]]
+                        st.session_state.map_target_location = (selected_row_k['LAT'], selected_row_k['LONG'], selected_row_k['Site ID'])
                 else:
                     st.info("🎉 Tidak ada site yang berada dalam radius bahaya (<10 km) titik api aktif.")
                 
@@ -459,6 +468,42 @@ if df_dapot is not None:
         elif len(event_hub.selection.rows) > 0: filter_col, filter_val = 'Hub site', hub_df.index[event_hub.selection.rows[0]]
 
         with col_map:
+            # 🔥 FITUR 3: INPUT PENCARIAN TITIK KOORDINAT / SITE ID
+            c_search_input, c_search_btn = st.columns([3.5, 1])
+            with c_search_input:
+                search_query = st.text_input(
+                    "🔍 Cari Lokasi",
+                    placeholder="Masukkan Site ID (contoh: PKY001) atau Koordinat (contoh: -2.214, 113.921)",
+                    label_visibility="collapsed"
+                )
+            with c_search_btn:
+                if st.button("Cari", use_container_width=True, type="primary"):
+                    if search_query:
+                        query_clean = search_query.strip()
+                        # Cek apakah format koordinat (ada koma atau spasi dua angka)
+                        if ',' in query_clean:
+                            try:
+                                parts = query_clean.split(',')
+                                lat_q = float(parts[0].strip().replace(',', '.'))
+                                lon_q = float(parts[1].strip().replace(',', '.'))
+                                st.session_state.map_target_location = (lat_q, lon_q, f"Target ({lat_q:.4f}, {lon_q:.4f})")
+                                st.success(f"📍 Menuju ke koordinat: {lat_q:.5f}, {lon_q:.5f}")
+                            except Exception:
+                                st.error("Format koordinat tidak valid. Gunakan format: Lat, Long")
+                        else:
+                            # Cari berdasarkan Site ID / Site Name
+                            match_site = df_dapot[
+                                df_dapot['Site_ID'].astype(str).str.contains(query_clean, case=False, na=False) |
+                                df_dapot['NE_CLEAN'].astype(str).str.contains(query_clean, case=False, na=False) |
+                                df_dapot['Real_Site_Name'].astype(str).str.contains(query_clean, case=False, na=False)
+                            ]
+                            if not match_site.empty and pd.notnull(match_site.iloc[0]['LAT']) and pd.notnull(match_site.iloc[0]['LONG']):
+                                target_s = match_site.iloc[0]
+                                st.session_state.map_target_location = (target_s['LAT'], target_s['LONG'], target_s['Site_ID'])
+                                st.success(f"📍 Menemukan Site: {target_s['Site_ID']} ({target_s['Real_Site_Name']})")
+                            else:
+                                st.warning(f"Site ID atau nama '{query_clean}' tidak ditemukan atau tidak memiliki koordinat.")
+
             df_map = df_active.copy()
             if filter_col and filter_val:
                 df_map = df_map[df_map[filter_col] == filter_val]
@@ -482,10 +527,18 @@ if df_dapot is not None:
                 df_map = df_map.dropna(subset=['LAT', 'LONG'])
                 
                 if not df_map.empty:
-                    m = folium.Map(location=[df_map['LAT'].mean(), df_map['LONG'].mean()], zoom_start=10, control_scale=True)
+                    # Inisialisasi Center Peta (Mendukung Zoom Langsung ke Target)
+                    if st.session_state.map_target_location:
+                        center_lat, center_lon, target_label_name = st.session_state.map_target_location
+                        map_zoom = 15
+                    else:
+                        center_lat, center_lon = df_map['LAT'].mean(), df_map['LONG'].mean()
+                        map_zoom = 10
+
+                    m = folium.Map(location=[center_lat, center_lon], zoom_start=map_zoom, control_scale=True)
                     folium.TileLayer(tiles='https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', attr='Google', name='Google Satellite').add_to(m)
                     
-                    # 🔥 1. HEATMAP KARHUTLA (LAYER PALING BAWAH DI BAWAH TITIK SITE)
+                    # 🔥 1. HEATMAP KARHUTLA (LAYER DI BAWAH SITE)
                     fg_hotspot_heat = folium.FeatureGroup(name=f"<span style='font-size:13px;'>🔥</span> <b>Heatmap Karhutla</b> <span style='font-size:10.5px; color:#555; font-weight:normal;'>(Last: {last_hotspot_str})</span>", show=False)
                     
                     if df_hotspot is not None and not df_hotspot.empty:
@@ -516,7 +569,6 @@ if df_dapot is not None:
                                     gradient={0.2: '#ffff00', 0.5: '#ff8800', 0.8: '#ff0000', 1.0: '#8b0000'}
                                 ).add_to(fg_hotspot_heat)
                     
-                    # Tambahkan HeatMap ke peta terlebih dahulu agar posisinya di bawah
                     m.add_child(fg_hotspot_heat)
 
                     # 🔥 2. LAYER SITE (DI ATAS HEATMAP)
@@ -527,7 +579,7 @@ if df_dapot is not None:
                     fg_id = folium.FeatureGroup(name="<span style='color:black; font-size:12px;'>🏷️</span> <b>Tampilkan ID Map</b>", show=False)
                     fg_hub = folium.FeatureGroup(name="<span style='color:#444; font-size:16px;'>★</span> <b>Penanda Hub Site</b>", show=True)
                     
-                    if (filter_col and filter_val) or st.session_state.status_filter != 'All' or is_spesifik_filtered:
+                    if not st.session_state.map_target_location and ((filter_col and filter_val) or st.session_state.status_filter != 'All' or is_spesifik_filtered):
                         min_lat, max_lat, min_lon, max_lon = df_map['LAT'].min(), df_map['LAT'].max(), df_map['LONG'].min(), df_map['LONG'].max()
                         if min_lat == max_lat: min_lat -= 0.02; max_lat += 0.02
                         if min_lon == max_lon: min_lon -= 0.02; max_lon += 0.02
@@ -584,7 +636,7 @@ if df_dapot is not None:
                             <b style="font-size:12px;">{site_name}</b> <br>
                             Site ID: <b>{site_id}</b><br>
                             Status: {status_label}{durasi_str}<br>
-                            <b>Class:</b> {site_class} | <b>TP:</b> {tp_val}<br>
+                            <b>Class:</b> {site_class} | <b>Tower Owner:</b> {tp_val}<br>
                             <b>Tipe:</b> {hub_status} | <b>Power:</b> {power_type}<br>
                             <b>Grid:</b> {grid_type} | <b>Transport:</b> {transport_type}<br>
                             <b>Simpul 4G:</b> {simpul_4g}<br>
@@ -620,6 +672,16 @@ if df_dapot is not None:
                         label_html = f'<div style="position:absolute; left:14px; top:-2px; font-size:10px; font-weight:bold; color:{color_hex}; text-shadow:-1px -1px 0 #FFF,1px -1px 0 #FFF,-1px 1px 0 #FFF,1px 1px 0 #FFF,0px 0px 3px #FFF; white-space:nowrap;">{site_id}</div>'
                         folium.Marker(location=[lat, lon], icon=folium.DivIcon(html=f'<div style="position:relative; width:12px; height:12px;">{label_html}</div>', icon_size=(12, 12), icon_anchor=(6, 6))).add_to(fg_id)
 
+                    # Highlight Target jika ada pencarian / klik tabel
+                    if st.session_state.map_target_location:
+                        t_lat, t_lon, t_lbl = st.session_state.map_target_location
+                        target_pin_html = f'''<div style="width:24px; height:24px; border:3px solid #9900ff; border-radius:50%; background:rgba(153, 0, 255, 0.4); box-shadow:0 0 10px #9900ff; display:flex; align-items:center; justify-content:center; font-size:12px;">📍</div>'''
+                        folium.Marker(
+                            location=[t_lat, t_lon],
+                            icon=folium.DivIcon(html=target_pin_html, icon_size=(24, 24), icon_anchor=(12, 12)),
+                            tooltip=folium.Tooltip(f"🎯 <b>Lokasi Terpilih:</b> {t_lbl}")
+                        ).add_to(m)
+
                     m.add_child(fg_down)
                     m.add_child(fg_pot)
                     m.add_child(fg_up)
@@ -635,15 +697,16 @@ if df_dapot is not None:
 
         st.divider()
         
+        # --- TABEL DETAIL RESPONSIP & BISA DI-KLIK UNTUK MENUNJUK SITE DI PETA ---
         if st.session_state.status_filter == 'All':
             df_followup = df_map[df_map['Status'].isin(['Down', 'Potential Down'])].copy()
-            st.subheader("📋 Detail Site (Follow Up: Down & Potential Down)")
+            st.subheader("📋 Detail Site (Follow Up: Down & Potential Down) - *Klik baris untuk menuju lokasi di peta*")
         elif st.session_state.status_filter == 'Up':
             df_followup = df_map[df_map['Status'] == 'Up'].copy()
-            st.subheader("📋 Detail Site (Status Up)")
+            st.subheader("📋 Detail Site (Status Up) - *Klik baris untuk menuju lokasi di peta*")
         else:
             df_followup = df_map[df_map['Status'] == st.session_state.status_filter].copy()
-            st.subheader(f"📋 Detail Site (Status {st.session_state.status_filter})")
+            st.subheader(f"📋 Detail Site (Status {st.session_state.status_filter}) - *Klik baris untuk menuju lokasi di peta*")
 
         if not df_followup.empty:
             def get_down_time(row):
@@ -659,14 +722,22 @@ if df_dapot is not None:
             
             kolom_detail = {
                 'Site_ID': 'Site ID', 'Real_Site_Name': 'Site Name', 'Status': 'Status', 'Site Class': 'Site Class',
-                'Kota/Kab': 'Kabupaten', 'Kecamatan': 'Kecamatan', 'Tower Provider': 'TP', 'POWER TYPE': 'Tipe Power',
+                'Kota/Kab': 'Kabupaten', 'Kecamatan': 'Kecamatan', 'Tower Provider': 'Tower Owner', 'POWER TYPE': 'Tipe Power',
                 'Grid Category New': 'Grid', 'Hub site': 'Hub/Non Hub', 'Simpul 4G': 'Simpul 4G',
-                'Durasi Alarm': 'Durasi Alarm', 'Suggestion (Nearest Up)': 'Recommend to Optim crowd'
+                'Durasi Alarm': 'Durasi Alarm', 'Suggestion (Nearest Up)': 'Recommend to Optim crowd',
+                'LAT': 'LAT', 'LONG': 'LONG'
             }
             
-            df_detail_final = df_followup[[k for k in kolom_detail.keys() if k in df_followup.columns]].rename(columns=kolom_detail)
-            if 'Site ID' in df_detail_final.columns: df_detail_final = df_detail_final.set_index('Site ID')
-            st.dataframe(df_detail_final, height=350, use_container_width=True)
+            df_detail_data = df_followup[[k for k in kolom_detail.keys() if k in df_followup.columns]].rename(columns=kolom_detail)
+            df_detail_display = df_detail_data.drop(columns=['LAT', 'LONG'], errors='ignore').set_index('Site ID')
+            
+            event_detail = st.dataframe(df_detail_display, height=350, use_container_width=True, on_select="rerun", selection_mode="single-row")
+            
+            # Deteksi Klik Baris pada Tabel Detail
+            if len(event_detail.selection.rows) > 0:
+                selected_row = df_detail_data.iloc[event_detail.selection.rows[0]]
+                if pd.notnull(selected_row.get('LAT')) and pd.notnull(selected_row.get('LONG')):
+                    st.session_state.map_target_location = (selected_row['LAT'], selected_row['LONG'], selected_row['Site ID'])
         else:
             st.info("🎉 Tidak ada data site yang perlu di-follow up pada filter saat ini.")
                 
