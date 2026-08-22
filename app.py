@@ -466,37 +466,24 @@ if df_dapot is not None:
         elif len(event_hub.selection.rows) > 0: filter_col, filter_val = 'Hub site', hub_df.index[event_hub.selection.rows[0]]
 
         with col_map:
-            # 🔥 FITUR 1: AUTOCOMPLETE POPOVER SUGGESTION SITE ID (3 DIGIT)
+            # 🔥 PENCARIAN INSTAN SEARCHABLE SELECTBOX (AUTOCOMPLETE LANGSUNG)
             all_valid_sites = df_dapot.dropna(subset=['Site_ID', 'LAT', 'LONG']).copy()
+            site_options = ["-- Ketik min. 3 digit Site ID / Pilih Lokasi --"] + [
+                f"{row['Site_ID']} - {row['Real_Site_Name']} ({row.get('Kota/Kab', '-')})"
+                for _, row in all_valid_sites.iterrows()
+            ]
             
-            search_query = st.text_input(
+            selected_site_search = st.selectbox(
                 "🔍 Cari Lokasi / Site ID",
-                placeholder="Ketik min. 3 digit Site ID (contoh: PKY) atau Koordinat (contoh: -2.214, 113.921)",
+                options=site_options,
+                index=0,
                 label_visibility="collapsed"
             )
             
-            if search_query and len(search_query.strip()) >= 3:
-                q_clean = search_query.strip()
-                if ',' not in q_clean:
-                    matches = all_valid_sites[
-                        all_valid_sites['Site_ID'].astype(str).str.contains(q_clean, case=False, na=False) |
-                        all_valid_sites['Real_Site_Name'].astype(str).str.contains(q_clean, case=False, na=False)
-                    ]
-                    if not matches.empty:
-                        with st.popover(f"💡 Rekomendasi Site ID ({len(matches)} ditemukan - Klik untuk menuju lokasi)", use_container_width=True):
-                            for _, match_row in matches.head(8).iterrows():
-                                btn_label = f"📍 {match_row['Site_ID']} — {match_row['Real_Site_Name']} ({match_row.get('Kota/Kab', '-')})"
-                                if st.button(btn_label, key=f"btn_site_{match_row['Site_ID']}", use_container_width=True):
-                                    st.session_state.map_target_location = (match_row['LAT'], match_row['LONG'], match_row['Site_ID'])
-                                    st.rerun()
-                else:
-                    try:
-                        parts = q_clean.split(',')
-                        lat_q = float(parts[0].strip().replace(',', '.'))
-                        lon_q = float(parts[1].strip().replace(',', '.'))
-                        st.session_state.map_target_location = (lat_q, lon_q, f"Target ({lat_q:.4f}, {lon_q:.4f})")
-                    except Exception:
-                        pass
+            if selected_site_search and selected_site_search != site_options[0]:
+                selected_sid = selected_site_search.split(" - ")[0].strip()
+                matched_row_s = all_valid_sites[all_valid_sites['Site_ID'] == selected_sid].iloc[0]
+                st.session_state.map_target_location = (matched_row_s['LAT'], matched_row_s['LONG'], matched_row_s['Site_ID'])
 
             df_map = df_active.copy()
             if filter_col and filter_val:
