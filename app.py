@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import folium
+from folium.plugins import HeatMap
 from streamlit_folium import st_folium
 from datetime import datetime
 import math
@@ -135,6 +136,9 @@ if df_dapot is not None and not df_dapot.empty:
     col_class = find_col(df_dapot, ['SITE CLASS', 'Site_Class', 'Site Class', 'Class'])
     df_dapot['Site Class'] = df_dapot[col_class].fillna('-') if col_class else '-'
 
+    col_tp = find_col(df_dapot, ['Tower Provider', 'TP', 'Tower_Provider', 'Provider', 'Tower Provider New'])
+    df_dapot['Tower Provider'] = df_dapot[col_tp].fillna('-') if col_tp else '-'
+
     col_site_name_real = find_col(df_dapot, ['Site_Name', 'Site Name', 'site_name', 'Site Name(Office)'])
     df_dapot['Real_Site_Name'] = df_dapot[col_site_name_real].fillna('Unknown') if col_site_name_real else 'Unknown'
 
@@ -146,7 +150,6 @@ if df_dapot is not None and not df_dapot.empty:
     df_dapot = df_dapot[df_dapot['NE_CLEAN'] != ''].copy()
     df_dapot.drop_duplicates(subset=['NE_CLEAN'], keep='first', inplace=True)
     
-    # Inisialisasi awal kolom status & alarm agar kebal KeyError
     df_dapot['Status'] = 'Up'
     df_dapot['All_Alarms'] = ""
 
@@ -389,16 +392,65 @@ if df_dapot is not None:
             st.write("") 
             
             # --- TABEL SUMMARY INTERAKTIF ---
-            tab1, tab2, tab3, tab4 = st.tabs(["Kabupaten", "Kecamatan", "Site Class", "Hub/Non Hub"])
+            tab1, tab2, tab3, tab4, tab5 = st.tabs(["Kabupaten", "Kecamatan", "Site Class", "Hub/Non Hub", "🔥 Potensi Karhutla"])
             kab_df = get_summary_table(df_active, 'Kota/Kab')
             kec_df = get_summary_table(df_active, 'Kecamatan')
             cls_df = get_summary_table(df_active, 'Site Class')
             hub_df = get_summary_table(df_active, 'Hub site')
             
+            # Perhitungan Jarak Site ke Titik Api Terdekat
+            df_karhutla_risk = pd.DataFrame()
+            if df_hotspot is not None and not df_hotspot.empty:
+                col_h_lat = find_col(df_hotspot, ['latitude', 'lat'])
+                col_h_lon = find_col(df_hotspot, ['longitude', 'long', 'lon'])
+                col_h_conf = find_col(df_hotspot, ['confidence', 'tingkat'])
+                
+                if col_h_lat and col_h_lon:
+                    df_h_clean = df_hotspot.dropna(subset=[col_h_lat, col_h_lon]).copy()
+                    df_h_clean['h_lat'] = df_h_clean[col_h_lat].astype(str).str.replace(',', '.').astype(float)
+                    df_h_clean['h_lon'] = df_h_clean[col_h_lon].astype(str).str.replace(',', '.').astype(float)
+                    
+                    risk_rows = []
+                    for _, s_row in df_active.dropna(subset=['LAT', 'LONG']).iterrows():
+                        s_lat, s_lon = s_row['LAT'], s_row['LONG']
+                        
+                        # Hitung jarak ke seluruh hotspot
+                        lat1, lon1 = map(math.radians, [s_lat, s_lon])
+                        lat2 = df_h_clean['h_lat'].apply(math.radians)
+                        lon2 = df_h_clean['h_lon'].apply(math.radians)
+                        
+                        dlat = lat2 - lat1
+                        dlon = lon2 - lon1
+                        a = (dlat/2).apply(math.sin)**2 + math.cos(lat1) * lat2.apply(math.cos) * (dlon/2).apply(math.sin)**2
+                        dists = 6371 * (2 * a.apply(math.sqrt).apply(lambda v: math.asin(min(1.0, max(0.0, v)))))
+                        
+                        min_dist = dists.min()
+                        if min_dist <= 10.0:  # Radius potensi bahaya 10 KM
+                            closest_idx = dists.idxmin()
+                            conf_val = df_h_clean.loc[closest_idx, col_h_conf] if col_h_conf else '-'
+                            risk_rows.append({
+                                'Site ID': s_row.get('Site_ID', '-'),
+                                'Site Name': s_row.get('Real_Site_Name', '-'),
+                                'Status': s_row.get('Status', '-'),
+                                'Jarak Api (km)': round(min_dist, 2),
+                                'Confidence Api': str(conf_val).strip().title(),
+                                'Site Class': s_row.get('Site Class', '-'),
+                                'Hub site': s_row.get('Hub site', '-'),
+                                'Tower Provider': s_row.get('Tower Provider', '-')
+                            })
+                    
+                    if risk_rows:
+                        df_karhutla_risk = pd.DataFrame(risk_rows).sort_values(by='Jarak Api (km)', ascending=True).set_index('Site ID')
+
             with tab1: event_kab = st.dataframe(kab_df, height=250, use_container_width=True, on_select="rerun", selection_mode="single-row")
             with tab2: event_kec = st.dataframe(kec_df, height=250, use_container_width=True, on_select="rerun", selection_mode="single-row")
             with tab3: event_cls = st.dataframe(cls_df, height=250, use_container_width=True, on_select="rerun", selection_mode="single-row")
             with tab4: event_hub = st.dataframe(hub_df, height=250, use_container_width=True, on_select="rerun", selection_mode="single-row")
+            with tab5:
+                if not df_karhutla_risk.empty:
+                    st.dataframe(df_karhutla_risk, height=250, use_container_width=True)
+                else:
+                    st.info("🎉 Tidak ada site yang berada dalam radius bahaya (<10 km) titik api aktif.")
                 
         filter_col, filter_val = None, None
         if len(event_kab.selection.rows) > 0: filter_col, filter_val = 'Kota/Kab', kab_df.index[event_kab.selection.rows[0]]
@@ -433,14 +485,47 @@ if df_dapot is not None:
                     m = folium.Map(location=[df_map['LAT'].mean(), df_map['LONG'].mean()], zoom_start=10, control_scale=True)
                     folium.TileLayer(tiles='https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', attr='Google', name='Google Satellite').add_to(m)
                     
+                    # 🔥 1. HEATMAP KARHUTLA (LAYER PALING BAWAH DI BAWAH TITIK SITE)
+                    fg_hotspot_heat = folium.FeatureGroup(name=f"<span style='font-size:13px;'>🔥</span> <b>Heatmap Karhutla</b> <span style='font-size:10.5px; color:#555; font-weight:normal;'>(Last: {last_hotspot_str})</span>", show=False)
+                    
+                    if df_hotspot is not None and not df_hotspot.empty:
+                        col_h_lat = find_col(df_hotspot, ['latitude', 'lat'])
+                        col_h_lon = find_col(df_hotspot, ['longitude', 'long', 'lon'])
+                        col_h_conf = find_col(df_hotspot, ['confidence', 'tingkat'])
+                        
+                        if col_h_lat and col_h_lon:
+                            df_h_valid = df_hotspot.dropna(subset=[col_h_lat, col_h_lon]).copy()
+                            heat_data = []
+                            for _, h_row in df_h_valid.iterrows():
+                                try:
+                                    h_lat = float(str(h_row[col_h_lat]).replace(',', '.'))
+                                    h_lon = float(str(h_row[col_h_lon]).replace(',', '.'))
+                                    h_conf = str(h_row[col_h_conf]).strip().title() if col_h_conf and pd.notnull(h_row[col_h_conf]) else 'Medium'
+                                    
+                                    weight = 1.0 if 'High' in h_conf else (0.6 if 'Medium' in h_conf else 0.3)
+                                    heat_data.append([h_lat, h_lon, weight])
+                                except Exception:
+                                    continue
+                            
+                            if heat_data:
+                                HeatMap(
+                                    heat_data,
+                                    radius=15,
+                                    blur=18,
+                                    max_zoom=13,
+                                    gradient={0.2: '#ffff00', 0.5: '#ff8800', 0.8: '#ff0000', 1.0: '#8b0000'}
+                                ).add_to(fg_hotspot_heat)
+                    
+                    # Tambahkan HeatMap ke peta terlebih dahulu agar posisinya di bawah
+                    m.add_child(fg_hotspot_heat)
+
+                    # 🔥 2. LAYER SITE (DI ATAS HEATMAP)
                     fg_down = folium.FeatureGroup(name="<span style='color:#e60000; font-size:12px;'>🔴</span> <b>Down</b>", show=True)
                     fg_pot = folium.FeatureGroup(name="<span style='color:#ff9900; font-size:12px;'>🟠</span> <b>Potential Down (<12h)</b>", show=True)
                     fg_up = folium.FeatureGroup(name="<span style='color:#00802b; font-size:12px;'>🟢</span> <b>Up</b>", show=True)
                     fg_rec = folium.FeatureGroup(name="<span style='color:#0066ff; font-size:12px;'>🔵</span> <b>Recommend to Optim</b>", show=False)
                     fg_id = folium.FeatureGroup(name="<span style='color:black; font-size:12px;'>🏷️</span> <b>Tampilkan ID Map</b>", show=False)
                     fg_hub = folium.FeatureGroup(name="<span style='color:#444; font-size:16px;'>★</span> <b>Penanda Hub Site</b>", show=True)
-                    
-                    fg_hotspot = folium.FeatureGroup(name=f"<span style='font-size:13px;'>🔥</span> <b>Hotspot Karhutla</b> <span style='font-size:10.5px; color:#555; font-weight:normal;'>(Last: {last_hotspot_str})</span>", show=False)
                     
                     if (filter_col and filter_val) or st.session_state.status_filter != 'All' or is_spesifik_filtered:
                         min_lat, max_lat, min_lon, max_lon = df_map['LAT'].min(), df_map['LAT'].max(), df_map['LONG'].min(), df_map['LONG'].max()
@@ -454,6 +539,7 @@ if df_dapot is not None:
                         ne_id = str(row.get('NE_CLEAN', 'Unknown')).strip()
                         site_name = row.get('Real_Site_Name', 'Unknown')
                         site_class = row.get('Site Class', '-')
+                        tp_val = row.get('Tower Provider', '-')
                         status = row['Status']
                         
                         grid_type = row.get('Grid Category New', '-')
@@ -498,9 +584,9 @@ if df_dapot is not None:
                             <b style="font-size:12px;">{site_name}</b> <br>
                             Site ID: <b>{site_id}</b><br>
                             Status: {status_label}{durasi_str}<br>
-                            <b>Class:</b> {site_class} | <b>Tipe:</b> {hub_status}<br>
-                            <b>Power:</b> {power_type} | <b>Grid:</b> {grid_type}<br>
-                            <b>Transport:</b> {transport_type}<br>
+                            <b>Class:</b> {site_class} | <b>TP:</b> {tp_val}<br>
+                            <b>Tipe:</b> {hub_status} | <b>Power:</b> {power_type}<br>
+                            <b>Grid:</b> {grid_type} | <b>Transport:</b> {transport_type}<br>
                             <b>Simpul 4G:</b> {simpul_4g}<br>
                             <b>Simpul Telkom:</b> {simpul_telkom}<br>
                             <b>Jumlah Anakan:</b> {jumlah_anakan} site<br>
@@ -534,75 +620,12 @@ if df_dapot is not None:
                         label_html = f'<div style="position:absolute; left:14px; top:-2px; font-size:10px; font-weight:bold; color:{color_hex}; text-shadow:-1px -1px 0 #FFF,1px -1px 0 #FFF,-1px 1px 0 #FFF,1px 1px 0 #FFF,0px 0px 3px #FFF; white-space:nowrap;">{site_id}</div>'
                         folium.Marker(location=[lat, lon], icon=folium.DivIcon(html=f'<div style="position:relative; width:12px; height:12px;">{label_html}</div>', icon_size=(12, 12), icon_anchor=(6, 6))).add_to(fg_id)
 
-                    # --- RENDER TITIK HOTSPOT KARHUTLA ---
-                    if df_hotspot is not None and not df_hotspot.empty:
-                        col_h_lat = find_col(df_hotspot, ['latitude', 'lat'])
-                        col_h_lon = find_col(df_hotspot, ['longitude', 'long', 'lon'])
-                        col_h_conf = find_col(df_hotspot, ['confidence', 'tingkat'])
-                        col_h_desa = find_col(df_hotspot, ['desa', 'kelurahan'])
-                        col_h_kec = find_col(df_hotspot, ['kecamatan', 'kec'])
-                        col_h_kab = find_col(df_hotspot, ['kab kota', 'kabupaten', 'kota'])
-                        col_h_prov = find_col(df_hotspot, ['provinsi', 'prov'])
-                        col_h_tgl = find_col(df_hotspot, ['tanggal', 'date', 'tgl'])
-                        col_h_wkt = find_col(df_hotspot, ['waktu', 'time', 'jam'])
-                        col_h_sat = find_col(df_hotspot, ['satelit', 'satellite'])
-
-                        if col_h_lat and col_h_lon:
-                            df_hotspot_valid = df_hotspot.dropna(subset=[col_h_lat, col_h_lon]).copy()
-                            for _, h_row in df_hotspot_valid.iterrows():
-                                try:
-                                    h_lat = float(str(h_row[col_h_lat]).replace(',', '.'))
-                                    h_lon = float(str(h_row[col_h_lon]).replace(',', '.'))
-                                    h_conf = str(h_row[col_h_conf]).strip().title() if col_h_conf and pd.notnull(h_row[col_h_conf]) else 'Medium'
-                                    
-                                    if 'High' in h_conf:
-                                        fire_border_color = "#e60000"
-                                    elif 'Medium' in h_conf:
-                                        fire_border_color = "#ffaa00"
-                                    else:
-                                        fire_border_color = "#a8d800"
-
-                                    h_desa = h_row[col_h_desa] if col_h_desa and pd.notnull(h_row[col_h_desa]) else '-'
-                                    h_kec = h_row[col_h_kec] if col_h_kec and pd.notnull(h_row[col_h_kec]) else '-'
-                                    h_kab = h_row[col_h_kab] if col_h_kab and pd.notnull(h_row[col_h_kab]) else '-'
-                                    h_prov = h_row[col_h_prov] if col_h_prov and pd.notnull(h_row[col_h_prov]) else '-'
-                                    h_tgl = str(h_row[col_h_tgl]) if col_h_tgl and pd.notnull(h_row[col_h_tgl]) else '-'
-                                    h_wkt = str(h_row[col_h_wkt]) if col_h_wkt and pd.notnull(h_row[col_h_wkt]) else ''
-                                    h_sat = str(h_row[col_h_sat]) if col_h_sat and pd.notnull(h_row[col_h_sat]) else '-'
-
-                                    h_tooltip = f"""
-                                    <div style="width: 220px; font-size:11px; color:black; line-height: 1.35; overflow: hidden;">
-                                        <b style="font-size:12px; color:{fire_border_color};">🔥 Hotspot Karhutla ({h_conf})</b><br>
-                                        <div style="margin-top: 3px;">
-                                            <b>Lokasi:</b> 
-                                            <span style="display: inline-block; max-width: 150px; vertical-align: top; word-break: break-word; white-space: normal;">
-                                                {h_desa}, {h_kec}, {h_kab}
-                                            </span>
-                                        </div>
-                                        <b>Provinsi:</b> {h_prov}<br>
-                                        <b>Waktu:</b> {h_tgl} {h_wkt}<br>
-                                        <b>Satelit:</b> {h_sat}<br>
-                                        <b>Koordinat:</b> {h_lat:.5f}, {h_lon:.5f}
-                                    </div>
-                                    """
-
-                                    badge_html = f'''<div style="background-color:{fire_border_color}; width:20px; height:20px; border-radius:50%; display:flex; align-items:center; justify-content:center; border:2px solid white; box-shadow:0 0 5px rgba(0,0,0,0.7); font-size:11px; cursor:pointer;">🔥</div>'''
-                                    
-                                    folium.Marker(
-                                        location=[h_lat, h_lon],
-                                        icon=folium.DivIcon(html=badge_html, icon_size=(20, 20), icon_anchor=(10, 10)),
-                                        tooltip=folium.Tooltip(h_tooltip)
-                                    ).add_to(fg_hotspot)
-                                except Exception:
-                                    continue
-
                     m.add_child(fg_down)
                     m.add_child(fg_pot)
                     m.add_child(fg_up)
                     m.add_child(fg_rec)
                     m.add_child(fg_id)
                     m.add_child(fg_hub)
-                    m.add_child(fg_hotspot)
                     
                     folium.LayerControl(position='topright', collapsed=True).add_to(m)
                     
@@ -636,7 +659,7 @@ if df_dapot is not None:
             
             kolom_detail = {
                 'Site_ID': 'Site ID', 'Real_Site_Name': 'Site Name', 'Status': 'Status', 'Site Class': 'Site Class',
-                'Kota/Kab': 'Kabupaten', 'Kecamatan': 'Kecamatan', 'POWER TYPE': 'Tipe Power',
+                'Kota/Kab': 'Kabupaten', 'Kecamatan': 'Kecamatan', 'Tower Provider': 'TP', 'POWER TYPE': 'Tipe Power',
                 'Grid Category New': 'Grid', 'Hub site': 'Hub/Non Hub', 'Simpul 4G': 'Simpul 4G',
                 'Durasi Alarm': 'Durasi Alarm', 'Suggestion (Nearest Up)': 'Recommend to Optim crowd'
             }
