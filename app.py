@@ -139,7 +139,6 @@ if df_dapot is not None and not df_dapot.empty:
     col_class = find_col(df_dapot, ['SITE CLASS', 'Site_Class', 'Site Class', 'Class'])
     df_dapot['Site Class'] = df_dapot[col_class].fillna('-') if col_class else '-'
 
-    # Menggunakan Kolom TOWER OWNER untuk Tower Provider
     col_tp = find_col(df_dapot, ['TOWER OWNER', 'Tower Owner', 'tower owner', 'Tower Provider', 'TP', 'Tower_Provider'])
     df_dapot['Tower Provider'] = df_dapot[col_tp].fillna('-') if col_tp else '-'
 
@@ -402,7 +401,6 @@ if df_dapot is not None:
             cls_df = get_summary_table(df_active, 'Site Class')
             hub_df = get_summary_table(df_active, 'Hub site')
             
-            # Perhitungan Jarak Site ke Titik Api Terdekat
             df_karhutla_risk = pd.DataFrame()
             if df_hotspot is not None and not df_hotspot.empty:
                 col_h_lat = find_col(df_hotspot, ['latitude', 'lat'])
@@ -447,14 +445,14 @@ if df_dapot is not None:
                     if risk_rows:
                         df_karhutla_risk = pd.DataFrame(risk_rows).sort_values(by='Jarak Api (km)', ascending=True)
 
-            with tab1: event_kab = st.dataframe(kab_df, height=250, use_container_width=True, on_select="rerun", selection_mode="single-row")
-            with tab2: event_kec = st.dataframe(kec_df, height=250, use_container_width=True, on_select="rerun", selection_mode="single-row")
-            with tab3: event_cls = st.dataframe(cls_df, height=250, use_container_width=True, on_select="rerun", selection_mode="single-row")
-            with tab4: event_hub = st.dataframe(hub_df, height=250, use_container_width=True, on_select="rerun", selection_mode="single-row")
+            with tab1: event_kab = st.dataframe(kab_df, height=445, use_container_width=True, on_select="rerun", selection_mode="single-row")
+            with tab2: event_kec = st.dataframe(kec_df, height=445, use_container_width=True, on_select="rerun", selection_mode="single-row")
+            with tab3: event_cls = st.dataframe(cls_df, height=445, use_container_width=True, on_select="rerun", selection_mode="single-row")
+            with tab4: event_hub = st.dataframe(hub_df, height=445, use_container_width=True, on_select="rerun", selection_mode="single-row")
             with tab5:
                 if not df_karhutla_risk.empty:
                     df_karhutla_display = df_karhutla_risk.drop(columns=['LAT', 'LONG']).set_index('Site ID')
-                    event_karhutla = st.dataframe(df_karhutla_display, height=250, use_container_width=True, on_select="rerun", selection_mode="single-row")
+                    event_karhutla = st.dataframe(df_karhutla_display, height=445, use_container_width=True, on_select="rerun", selection_mode="single-row")
                     if len(event_karhutla.selection.rows) > 0:
                         selected_row_k = df_karhutla_risk.iloc[event_karhutla.selection.rows[0]]
                         st.session_state.map_target_location = (selected_row_k['LAT'], selected_row_k['LONG'], selected_row_k['Site ID'])
@@ -468,41 +466,41 @@ if df_dapot is not None:
         elif len(event_hub.selection.rows) > 0: filter_col, filter_val = 'Hub site', hub_df.index[event_hub.selection.rows[0]]
 
         with col_map:
-            # 🔥 FITUR 3: INPUT PENCARIAN TITIK KOORDINAT / SITE ID
-            c_search_input, c_search_btn = st.columns([3.5, 1])
-            with c_search_input:
-                search_query = st.text_input(
-                    "🔍 Cari Lokasi",
-                    placeholder="Masukkan Site ID (contoh: PKY001) atau Koordinat (contoh: -2.214, 113.921)",
-                    label_visibility="collapsed"
-                )
-            with c_search_btn:
-                if st.button("Cari", use_container_width=True, type="primary"):
-                    if search_query:
-                        query_clean = search_query.strip()
-                        # Cek apakah format koordinat (ada koma atau spasi dua angka)
-                        if ',' in query_clean:
-                            try:
-                                parts = query_clean.split(',')
-                                lat_q = float(parts[0].strip().replace(',', '.'))
-                                lon_q = float(parts[1].strip().replace(',', '.'))
-                                st.session_state.map_target_location = (lat_q, lon_q, f"Target ({lat_q:.4f}, {lon_q:.4f})")
-                                st.success(f"📍 Menuju ke koordinat: {lat_q:.5f}, {lon_q:.5f}")
-                            except Exception:
-                                st.error("Format koordinat tidak valid. Gunakan format: Lat, Long")
-                        else:
-                            # Cari berdasarkan Site ID / Site Name
-                            match_site = df_dapot[
-                                df_dapot['Site_ID'].astype(str).str.contains(query_clean, case=False, na=False) |
-                                df_dapot['NE_CLEAN'].astype(str).str.contains(query_clean, case=False, na=False) |
-                                df_dapot['Real_Site_Name'].astype(str).str.contains(query_clean, case=False, na=False)
-                            ]
-                            if not match_site.empty and pd.notnull(match_site.iloc[0]['LAT']) and pd.notnull(match_site.iloc[0]['LONG']):
-                                target_s = match_site.iloc[0]
-                                st.session_state.map_target_location = (target_s['LAT'], target_s['LONG'], target_s['Site_ID'])
-                                st.success(f"📍 Menemukan Site: {target_s['Site_ID']} ({target_s['Real_Site_Name']})")
-                            else:
-                                st.warning(f"Site ID atau nama '{query_clean}' tidak ditemukan atau tidak memiliki koordinat.")
+            # 🔥 FITUR 1: AUTOCOMPLETE POPUP SUGGESTION SITE ID (3 DIGIT)
+            all_valid_sites = df_dapot.dropna(subset=['Site_ID', 'LAT', 'LONG']).copy()
+            all_valid_sites['Search_Label'] = all_valid_sites['Site_ID'].astype(str) + " - " + all_valid_sites['Real_Site_Name'].astype(str)
+            
+            search_query = st.text_input(
+                "🔍 Cari Lokasi / Site ID",
+                placeholder="Ketik min. 3 digit Site ID (contoh: PKY) atau Koordinat (contoh: -2.214, 113.921)",
+                label_visibility="collapsed"
+            )
+            
+            if search_query and len(search_query.strip()) >= 3:
+                q_clean = search_query.strip()
+                if ',' not in q_clean:
+                    matches = all_valid_sites[
+                        all_valid_sites['Site_ID'].astype(str).str.contains(q_clean, case=False, na=False) |
+                        all_valid_sites['Real_Site_Name'].astype(str).str.contains(q_clean, case=False, na=False)
+                    ]
+                    if not matches.empty:
+                        options = matches['Search_Label'].tolist()
+                        selected_option = st.selectbox(
+                            f"📌 Ditemukan {len(options)} rekomendasi site (Pilih untuk menuju lokasi):",
+                            options,
+                            key="site_autocomplete_select"
+                        )
+                        if selected_option:
+                            matched_row_s = matches[matches['Search_Label'] == selected_option].iloc[0]
+                            st.session_state.map_target_location = (matched_row_s['LAT'], matched_row_s['LONG'], matched_row_s['Site_ID'])
+                else:
+                    try:
+                        parts = q_clean.split(',')
+                        lat_q = float(parts[0].strip().replace(',', '.'))
+                        lon_q = float(parts[1].strip().replace(',', '.'))
+                        st.session_state.map_target_location = (lat_q, lon_q, f"Target ({lat_q:.4f}, {lon_q:.4f})")
+                    except Exception:
+                        pass
 
             df_map = df_active.copy()
             if filter_col and filter_val:
@@ -527,7 +525,6 @@ if df_dapot is not None:
                 df_map = df_map.dropna(subset=['LAT', 'LONG'])
                 
                 if not df_map.empty:
-                    # Inisialisasi Center Peta (Mendukung Zoom Langsung ke Target)
                     if st.session_state.map_target_location:
                         center_lat, center_lon, target_label_name = st.session_state.map_target_location
                         map_zoom = 15
@@ -538,7 +535,7 @@ if df_dapot is not None:
                     m = folium.Map(location=[center_lat, center_lon], zoom_start=map_zoom, control_scale=True)
                     folium.TileLayer(tiles='https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', attr='Google', name='Google Satellite').add_to(m)
                     
-                    # 🔥 1. HEATMAP KARHUTLA (LAYER DI BAWAH SITE)
+                    # 🔥 1. HEATMAP KARHUTLA
                     fg_hotspot_heat = folium.FeatureGroup(name=f"<span style='font-size:13px;'>🔥</span> <b>Heatmap Karhutla</b> <span style='font-size:10.5px; color:#555; font-weight:normal;'>(Last: {last_hotspot_str})</span>", show=False)
                     
                     if df_hotspot is not None and not df_hotspot.empty:
@@ -571,7 +568,7 @@ if df_dapot is not None:
                     
                     m.add_child(fg_hotspot_heat)
 
-                    # 🔥 2. LAYER SITE (DI ATAS HEATMAP)
+                    # 🔥 2. LAYER SITE
                     fg_down = folium.FeatureGroup(name="<span style='color:#e60000; font-size:12px;'>🔴</span> <b>Down</b>", show=True)
                     fg_pot = folium.FeatureGroup(name="<span style='color:#ff9900; font-size:12px;'>🟠</span> <b>Potential Down (<12h)</b>", show=True)
                     fg_up = folium.FeatureGroup(name="<span style='color:#00802b; font-size:12px;'>🟢</span> <b>Up</b>", show=True)
@@ -672,7 +669,7 @@ if df_dapot is not None:
                         label_html = f'<div style="position:absolute; left:14px; top:-2px; font-size:10px; font-weight:bold; color:{color_hex}; text-shadow:-1px -1px 0 #FFF,1px -1px 0 #FFF,-1px 1px 0 #FFF,1px 1px 0 #FFF,0px 0px 3px #FFF; white-space:nowrap;">{site_id}</div>'
                         folium.Marker(location=[lat, lon], icon=folium.DivIcon(html=f'<div style="position:relative; width:12px; height:12px;">{label_html}</div>', icon_size=(12, 12), icon_anchor=(6, 6))).add_to(fg_id)
 
-                    # Highlight Target jika ada pencarian / klik tabel
+                    # Marker Lokasi Terpilih
                     if st.session_state.map_target_location:
                         t_lat, t_lon, t_lbl = st.session_state.map_target_location
                         target_pin_html = f'''<div style="width:24px; height:24px; border:3px solid #9900ff; border-radius:50%; background:rgba(153, 0, 255, 0.4); box-shadow:0 0 10px #9900ff; display:flex; align-items:center; justify-content:center; font-size:12px;">📍</div>'''
@@ -733,7 +730,6 @@ if df_dapot is not None:
             
             event_detail = st.dataframe(df_detail_display, height=350, use_container_width=True, on_select="rerun", selection_mode="single-row")
             
-            # Deteksi Klik Baris pada Tabel Detail
             if len(event_detail.selection.rows) > 0:
                 selected_row = df_detail_data.iloc[event_detail.selection.rows[0]]
                 if pd.notnull(selected_row.get('LAT')) and pd.notnull(selected_row.get('LONG')):
