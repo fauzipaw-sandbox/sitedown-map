@@ -426,7 +426,7 @@ if df_dapot is not None:
                         dists = 6371 * (2 * a.apply(math.sqrt).apply(lambda v: math.asin(min(1.0, max(0.0, v)))))
                         
                         min_dist = dists.min()
-                        if min_dist <= 10.0:  # Radius bahaya 10 KM
+                        if min_dist <= 10.0:
                             closest_idx = dists.idxmin()
                             conf_val = df_h_clean.loc[closest_idx, col_h_conf] if col_h_conf else '-'
                             risk_rows.append({
@@ -466,9 +466,8 @@ if df_dapot is not None:
         elif len(event_hub.selection.rows) > 0: filter_col, filter_val = 'Hub site', hub_df.index[event_hub.selection.rows[0]]
 
         with col_map:
-            # 🔥 FITUR 1: AUTOCOMPLETE POPUP SUGGESTION SITE ID (3 DIGIT)
+            # 🔥 FITUR 1: AUTOCOMPLETE POPOVER SUGGESTION SITE ID (3 DIGIT)
             all_valid_sites = df_dapot.dropna(subset=['Site_ID', 'LAT', 'LONG']).copy()
-            all_valid_sites['Search_Label'] = all_valid_sites['Site_ID'].astype(str) + " - " + all_valid_sites['Real_Site_Name'].astype(str)
             
             search_query = st.text_input(
                 "🔍 Cari Lokasi / Site ID",
@@ -484,15 +483,12 @@ if df_dapot is not None:
                         all_valid_sites['Real_Site_Name'].astype(str).str.contains(q_clean, case=False, na=False)
                     ]
                     if not matches.empty:
-                        options = matches['Search_Label'].tolist()
-                        selected_option = st.selectbox(
-                            f"📌 Ditemukan {len(options)} rekomendasi site (Pilih untuk menuju lokasi):",
-                            options,
-                            key="site_autocomplete_select"
-                        )
-                        if selected_option:
-                            matched_row_s = matches[matches['Search_Label'] == selected_option].iloc[0]
-                            st.session_state.map_target_location = (matched_row_s['LAT'], matched_row_s['LONG'], matched_row_s['Site_ID'])
+                        with st.popover(f"💡 Rekomendasi Site ID ({len(matches)} ditemukan - Klik untuk menuju lokasi)", use_container_width=True):
+                            for _, match_row in matches.head(8).iterrows():
+                                btn_label = f"📍 {match_row['Site_ID']} — {match_row['Real_Site_Name']} ({match_row.get('Kota/Kab', '-')})"
+                                if st.button(btn_label, key=f"btn_site_{match_row['Site_ID']}", use_container_width=True):
+                                    st.session_state.map_target_location = (match_row['LAT'], match_row['LONG'], match_row['Site_ID'])
+                                    st.rerun()
                 else:
                     try:
                         parts = q_clean.split(',')
